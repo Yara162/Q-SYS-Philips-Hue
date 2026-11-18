@@ -56,13 +56,21 @@
 --       UNVERIFIED against a real bridge (Hue v1 API documentation): Core test step 13.
 -- 16. A layout graphic of Type "Image" shows the base64 PNG in its Image key at the given Size.
 --       UNVERIFIED: Core test step 16 (About page logo).
+-- 17. Hue: on=false with a transitiontime fades the light and stores brightness 1, so it comes
+--     back on at 1 %. The fake bridge does this.
+--       verified on Yara's bridge (BSB002, 1.78), 2026-11-18: All Off then All On came back at 1 %.
+-- 18. print() writes a line to the plugin's Debug Output; Timer.CallAfter(f, s) calls f once.
+--       verified (reference § Timer, § Log); the sim captures print.
+-- 19. RWL022 dimmers report v1 buttonevent codes x000/x002 and a new lastupdated per event,
+--       verified 2026-11-18 by reading Yara's bridge /sensors while pressing (4002, 1000->1002, 3002).
+--       Hold codes (x001/x003) not yet seen on the real bridge.
 
 local PLUGIN = arg[1] or "philips-hue.qplug"
 local chunk = assert(loadfile(PLUGIN))
 local passed, failed = 0, 0
 local function check(name, ok, detail)
     if ok then passed = passed + 1 else failed = failed + 1 end
-    print((ok and "PASS  " or "FAIL  ") .. name .. ((not ok and detail ~= nil) and ("  -- " .. tostring(detail)) or ""))
+    io.write((ok and "PASS  " or "FAIL  ") .. name .. ((not ok and detail ~= nil) and ("  -- " .. tostring(detail)) or ""), "\n")
 end
 
 -- ---------------------------------------------------------------- JSON (the rapidjson stand-in)
@@ -160,6 +168,11 @@ end
 -- ---------------------------------------------------------------- clock and timers
 local CLOCK = 1000.0
 local TIMERS = {}
+PRINTED = {}
+print = function(...) local parts = {} for _, v in ipairs({ ... }) do table.insert(parts, tostring(v)) end table.insert(PRINTED, table.concat(parts, "\t")) end
+local real_print = io.write
+local function out(line) io.write(line, "\n") end
+
 local function newTimer()
     local t = { interval = nil, nextAt = nil }
     function t:Start(s) self.interval = s; self.nextAt = CLOCK + s end
@@ -250,6 +263,8 @@ local function bridgeRespond(method, url, data)
             local L = BRIDGE.lights[lid]
             if not L then return err(3, rest, "resource, /lights/" .. lid .. ", not available") end
             local out = {}
+            -- Hue quirk: off with a transitiontime fades the light down and stores brightness 1.
+            if body.on == false and body.transitiontime ~= nil and L.state.bri then L.state.bri = 1 end
             for k, v in pairs(body) do
                 if k ~= "transitiontime" then
                     if L.state[k] == nil then return err(6, rest .. "/" .. k, "parameter, " .. k .. ", not available") end
@@ -270,6 +285,7 @@ local function bridgeRespond(method, url, data)
                 BRIDGE.recalled = { group = gid, scene = body.scene }
             end
             for _, id in ipairs(members) do
+                if body.on == false and body.transitiontime ~= nil then BRIDGE.lights[id].state.bri = 1 end   -- same quirk
                 if body.on ~= nil then BRIDGE.lights[id].state.on = body.on end
                 if body.bri ~= nil then BRIDGE.lights[id].state.bri = body.bri end
             end
@@ -352,7 +368,7 @@ local function props(t)
 end
 
 local DEFAULT_PROPS = { ["Bridge IP"] = "", ["App Key"] = "", ["Use HTTPS"] = false, ["Light Count"] = 8,
-    ["Group Count"] = 4, ["Switch Count"] = 4, ["Motion Count"] = 2, ["Poll Interval"] = 3, ["Transition Time"] = 4 }
+    ["Group Count"] = 4, ["Switch Count"] = 4, ["Motion Count"] = 2, ["Poll Interval (seconds)"] = 3, ["Transition Time (x100 ms)"] = 4 }
 
 local function withProps(over)
     local t = {}
@@ -377,7 +393,8 @@ local function boot(propOver, panel)
     for name, s in pairs(panel or {}) do Controls[name].String = s end
     Properties = props(p)
     TIMERS, HTTP_QUEUE, HTTP_LOG, COLOR_WRITES = {}, {}, {}, {}
-    Timer = { New = newTimer, Now = function() return CLOCK end }
+    Timer = { New = newTimer, Now = function() return CLOCK end,
+        CallAfter = function(f, delay) local t = newTimer(); t.EventHandler = function() t:Stop(); f() end; t:Start(delay) end }
     HttpClient = {
         Get = function(a) httpCall("GET", a) end,
         Upload = function(a) httpCall(a.Method or "POST", a) end,
@@ -465,16 +482,16 @@ end
 checkLayout("default", {})
 checkLayout("max slots", { ["Light Count"] = 32, ["Group Count"] = 16 })
 local p0 = checkLayout("no groups", { ["Group Count"] = 0 })
-check("Group Count 0 drops the Groups page", #p0 == 4 and p0[1].name == "Lights" and p0[2].name == "Switches & Sensors")
+check("Group Count 0 drops the Groups and Scene Buttons pages", #p0 == 4 and p0[1].name == "Lights" and p0[2].name == "Switches & Sensors")
 local pfull = checkLayout("max sensors", { ["Switch Count"] = 16, ["Motion Count"] = 8 })
-check("pages: Lights, Groups, Switches & Sensors, Setup, About", #pfull == 5 and pfull[3].name == "Switches & Sensors" and pfull[5].name == "About",
+check("pages: Lights, Groups, Scene Buttons, Switches & Sensors, Setup, About", #pfull == 6 and pfull[3].name == "Scene Buttons" and pfull[4].name == "Switches & Sensors" and pfull[6].name == "About",
     #pfull)
 local pns = checkLayout("no sensors", { ["Switch Count"] = 0, ["Motion Count"] = 0 })
-check("Switch and Motion Count 0 drop the Switches & Sensors page", #pns == 4 and pns[3].name == "Setup")
+check("Switch and Motion Count 0 drop the Switches & Sensors page", #pns == 5 and pns[4].name == "Setup")
 checkLayout("motion only", { ["Switch Count"] = 0, ["Motion Count"] = 3 })
 do
     local pr = props(withProps({}))
-    pr["page_index"] = { Value = 5 }
+    pr["page_index"] = { Value = #GetPages(pr) }   -- About is last
     local _, graphics = GetControlLayout(pr)
     local image, text = nil, {}
     for _, g in ipairs(graphics) do
@@ -774,6 +791,18 @@ boot({ ["Bridge IP"] = "192.168.1.50", ["App Key"] = "validkey", ["Switch Count"
 advance(3)
 check("with no switch or motion slots, /sensors is never polled", count("GET", "/sensors$") == 0, count("GET", "/sensors$"))
 
+-- ---------------------------------------------------------------- brightness survives All Off / All On
+freshBridge()
+boot({ ["Bridge IP"] = "192.168.1.50", ["App Key"] = "validkey" })
+advance(1)
+press("AllOff"); advance(1.2)
+press("AllOn"); advance(1.2)
+check("All Off then All On brings lights back at their brightness, not 1 %", BRIDGE.lights["2"].state.bri == 254 and BRIDGE.lights["10"].state.bri == 200,
+    BRIDGE.lights["2"].state.bri .. "/" .. BRIDGE.lights["10"].state.bri)
+user("L02On", "Boolean", false); advance(0.3)
+user("L02On", "Boolean", true); advance(0.3)
+check("a light's own OFF then ON keeps its brightness", BRIDGE.lights["2"].state.bri == 254, BRIDGE.lights["2"].state.bri)
+
 -- ---------------------------------------------------------------- All On / All Off on every page
 do
     local pr = props(withProps({}))
@@ -805,10 +834,62 @@ for _, t in ipairs(pairsToTry) do
     if not last or last.body.on ~= t[2] or BRIDGE.lights["10"].state.on ~= t[2] then allOk = false; table.insert(why, t[1]) end
 end
 check("each page's All On / All Off sends on=true / on=false to every light (group 0)", allOk, table.concat(why, ", "))
+press("AllOnScenes"); advance(1.2)
+check("the Scene Buttons page has its own working All On", putsTo("/groups/0/action")[#putsTo("/groups/0/action")].body.on == true)
+check("All Off goes out without a transitiontime (Hue would store brightness 1)", putsTo("/groups/0/action")[2].body.transitiontime == nil and putsTo("/groups/0/action")[1].body.transitiontime == 4)
 
 freshBridge()
 ok, err = boot({ ["Bridge IP"] = "192.168.1.50", ["App Key"] = "validkey", ["Group Count"] = 0, ["Switch Count"] = 0, ["Motion Count"] = 0 })
 check("with no Groups or Sensors pages, their All On/Off buttons aren't declared", ok and Controls.AllOnGroups == nil and Controls.AllOnSensors == nil and Controls.AllOnLights ~= nil, err)
 
-print(("\n%d passed, %d failed"):format(passed, failed))
+
+-- ---------------------------------------------------------------- v1.3: readouts, scene buttons, switch log
+freshBridge()
+boot({ ["Bridge IP"] = "192.168.1.50", ["App Key"] = "validkey" })
+check("number readouts beside the faders follow the bridge", ctl("L01BriV").String == "50%" and ctl("L01CtV").String == "2732K" and ctl("L04HueV").String == "5\u{B0}" and ctl("L04SatV").String == "39%" and ctl("G01BriV").String == "100%",
+    table.concat({ ctl("L01BriV").String, ctl("L01CtV").String, ctl("L04HueV").String, ctl("L04SatV").String, ctl("G01BriV").String }, " "))
+advance(1)
+user("L01Bri", "Value", 73); user("L01Ct", "Value", 4100)
+check("moving a fader updates its readout at once", ctl("L01BriV").String == "73%" and ctl("L01CtV").String == "4100K", ctl("L01BriV").String .. " " .. ctl("L01CtV").String)
+user("G02Bri", "Value", 12)
+check("a room fader updates its readout too", ctl("G02BriV").String == "12%", ctl("G02BriV").String)
+check("an empty light slot's readouts show a number, not blank", ctl("L06BriV").String == "0%", ctl("L06BriV").String)
+
+check("scene pickers list the room's scenes", table.concat(ctl("G01Sc1").Choices or {}, "|") == "Bright|Relax|Relax (2)" and table.concat(ctl("G02Sc4").Choices or {}, "|") == "Night")
+check("an unset scene button is captioned 'Scene N'", ctl("G01Go2").Legend == "Scene 2", ctl("G01Go2").Legend)
+check("the Scene Buttons page shows each room's name", ctl("G01NameB").String == "Office" and ctl("G02NameB").String == "Outside", ctl("G01NameB").String)
+advance(1)
+user("G01Sc2", "String", "Relax")
+check("picking a scene captions the button with it", ctl("G01Go2").Legend == "Relax", ctl("G01Go2").Legend)
+press("G01Go2"); advance(1.2)
+check("pressing the scene button recalls that scene in that room", BRIDGE.recalled and BRIDGE.recalled.group == "1" and BRIDGE.recalled.scene == "abc", BRIDGE.recalled and BRIDGE.recalled.scene)
+user("G02Sc4", "String", "Night"); press("G02Go4"); advance(1.2)
+check("each room's buttons recall in their own room", BRIDGE.recalled.group == "2" and BRIDGE.recalled.scene == "nnn", BRIDGE.recalled.group)
+local n0 = #BRIDGE.puts
+press("G01Go3"); advance(1.2)
+check("an unset scene button says so and sends nothing", status():find("scene button 3 has no scene set") ~= nil and #BRIDGE.puts == n0, status())
+local panel13 = {}
+for name, c in pairs(Controls) do panel13[name] = c.String end
+boot({ ["Bridge IP"] = "192.168.1.50", ["App Key"] = "validkey" }, panel13)
+check("scene button settings and captions survive a restart", ctl("G01Sc2").String == "Relax" and ctl("G01Go2").Legend == "Relax", ctl("G01Go2").Legend)
+
+-- the switch path on the Core: every new event goes to the debug output; Press still pulses if :Trigger() is missing
+freshBridge()
+boot({ ["Bridge IP"] = "192.168.1.50", ["App Key"] = "validkey" })
+advance(1)
+PRINTED = {}
+switchEvent("2", 2002); advance(0.6)
+local logged = table.concat(PRINTED, "\n")
+check("a new switch event is written to the debug output", logged:find("Switch 01 %(Office dimmer%): Button 2 short release %[buttonevent 2002") ~= nil, logged)
+rawset(getmetatable(Controls.S01P3).__index, "Trigger", nil)
+advance(1); switchEvent("2", 3002)
+local wentOn, onFor = false, 0
+for _ = 1, 20 do
+    advance(0.05)
+    if Controls.S01P3.Boolean then wentOn = true; onFor = onFor + 0.05 end
+end
+check("without :Trigger(), Press turns on for a moment instead", wentOn)
+check("and back off after about 0.2 s", Controls.S01P3.Boolean == false and onFor > 0.1 and onFor < 0.35, onFor)
+
+io.write(("\n%d passed, %d failed\n"):format(passed, failed))
 os.exit(failed == 0 and 0 or 1)

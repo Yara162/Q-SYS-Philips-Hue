@@ -79,6 +79,13 @@ get_controls = re.search(r"function GetControls\(.*?\n(.*?)\nend", src, re.S).gr
 declared = set(re.findall(r'Name\s*=\s*"([^"]+)"\s*,\s*ControlType', get_controls))
 declared_lf = set(re.findall(r'Name\s*=\s*LKey\(i,\s*"(\w+)"\)', get_controls))
 declared_gf = set(re.findall(r'Name\s*=\s*GKey\(i,\s*"(\w+)"\)', get_controls))
+# Fields declared in loops: Name = LKey(i, f) over an ipairs list, and Name = GKey(i, "Sc" .. b).
+for lst in re.findall(r'for _, f in ipairs\(\{([^}]*)\}\) do\s*table\.insert\(ctls, \{ Name = LKey\(i, f\)', get_controls):
+    declared_lf |= set(re.findall(r'"(\w+)"', lst))
+m_sb = re.search(r"SCENE_BUTTONS\s*=\s*(\d+)", src)
+nsb = int(m_sb.group(1)) if m_sb else 0
+for prefix in re.findall(r'Name\s*=\s*GKey\(i,\s*"(\w+)"\s*\.\.\s*b\)', get_controls):
+    declared_gf |= {f"{prefix}{b}" for b in range(1, nsb + 1)}
 check("GetControls declares exactly LIGHT_FIELDS per light slot", declared_lf == light_fields, f"declared {sorted(declared_lf)}, list {sorted(light_fields)}")
 check("GetControls declares exactly GROUP_FIELDS per group slot", declared_gf == group_fields, f"declared {sorted(declared_gf)}, list {sorted(group_fields)}")
 switch_fields, motion_fields = field_list("SWITCH_FIELDS"), field_list("MOTION_FIELDS")
@@ -99,6 +106,11 @@ check(f"runtime control refs are declared ({len(used)} named refs, {len(declared
 
 lf_used = set(re.findall(r'\bL\(i,\s*"(\w+)"\)', runtime))
 gf_used = set(re.findall(r'\bG\(i,\s*"(\w+)"\)', runtime))
+for prefix in re.findall(r'\bG\(i,\s*"(\w+)"\s*\.\.\s*b\)', runtime):
+    gf_used |= {f"{prefix}{b}" for b in range(1, nsb + 1)}
+# L(i, f) / L(i, f .. "V") over a literal field list
+for lst, suffix in re.findall(r'for _, f in ipairs\(\{([^}]*)\}\) do[^\n]*L\(i, f \.\. "(\w+)"\)', runtime):
+    lf_used |= {f + suffix for f in re.findall(r'"(\w+)"', lst)}
 check(f"light slot fields used at runtime are declared ({len(lf_used)})", lf_used <= light_fields, ", ".join(sorted(lf_used - light_fields)))
 check(f"group slot fields used at runtime are declared ({len(gf_used)})", gf_used <= group_fields, ", ".join(sorted(gf_used - group_fields)))
 sf_used = set(re.findall(r'\bS\(i,\s*"(\w+)"\)', runtime))

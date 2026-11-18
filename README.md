@@ -5,7 +5,7 @@
 A Q-SYS plugin that controls Philips Hue lights, rooms and zones, and reads Hue switches and motion sensors, through a Hue Bridge on the local network. It pairs with the bridge from the plugin's own panel, polls for feedback, and exposes every control as a pin.
 
 - **Lights:** on/off, brightness, colour temperature, hue, saturation, reachable status, name.
-- **Rooms and zones:** on/off, brightness, scene recall from the bridge's own scenes.
+- **Rooms and zones:** on/off, brightness, scene recall from the bridge's own scenes, and four scene buttons per room or zone, each set to a scene of your choice (ready to drop on a UCI).
 - **Switches:** a Press pin and a Hold pin per button, battery, last event.
 - **Motion sensors:** presence, light level, temperature, battery.
 - **All On / All Off** for every light on the bridge, at the top of every page.
@@ -43,7 +43,7 @@ Every light, room/zone, switch and motion sensor slot has an **ID** field: the b
 
 ## Controls
 
-Pins are named by slot, e.g. *Light 03 Brightness*, *Group 02 Scene*, *Switch 01 Button 2 Press*, *Motion 01 Presence*, *All Off*. ON buttons read ON or OFF with the light's state.
+Pins are named by slot, e.g. *Light 03 Brightness*, *Group 02 Scene Button 1*, *Switch 01 Button 2 Press*, *Motion 01 Presence*, *All Off*. ON buttons read ON or OFF with the light's state, and every fader has its value printed beside it (%, K, °).
 
 | Page | Control | Pin | Notes |
 |---|---|---|---|
@@ -57,6 +57,8 @@ Pins are named by slot, e.g. *Light 03 Brightness*, *Group 02 Scene*, *Switch 01
 | | BRIGHTNESS | both | 0 % turns the room off. |
 | | SCENE | both | The bridge's scenes for that room or zone. Picking one, or writing a scene name to the pin, recalls it. Two scenes with the same name show as *Name* and *Name (2)*. |
 | | NAME | output | |
+| Scene Buttons | SCENE (per button) | both | Picks the scene for that button from the room's scenes. Writing a scene name to the pin sets it too. The setting is kept in the design. |
+| | Scene Button 1–4 | input | Recalls the scene set above it. The button is captioned with the scene's name. |
 | Switches & Sensors | Button 1–4 Press | output | Pulses when that button is pressed and released. |
 | | Button 1–4 Hold | output | On while that button is held; off at release. |
 | | LAST EVENT | output | e.g. *Button 2 short release*. |
@@ -77,6 +79,8 @@ The plugin reads the bridge's sensors twice a second, so it works with any switc
 - **Repeats:** the bridge stamps events to the second, so two presses of the same button within one second count as one.
 - **The bridge keeps its own rules.** A switch still does whatever the Hue app set it to do. To have a switch drive only Q-SYS, remove its actions in the Hue app.
 - **Restarts don't replay:** the last event the bridge holds is shown on Last Event at start, but fires nothing.
+- **Hold** needs a real hold: the switch reports it after about a second held down. A quick press is a Press, never a Hold.
+- Every new switch event is written to the plugin's Debug Output (*Switch 01 (Living room switch): Button 2 short release*), so you can see exactly what arrives.
 - A Hue motion sensor appears on the bridge as three sensors (presence, light level, temperature). Its slot takes the presence sensor's ID; the other two are found automatically.
 
 ## Properties
@@ -90,14 +94,15 @@ The plugin reads the bridge's sensors twice a second, so it works with any switc
 | Group Count | 4 | Room/zone slots, 0–16. 0 removes the Rooms & Zones page. |
 | Switch Count | 4 | Switch slots, 0–16. |
 | Motion Count | 2 | Motion sensor slots, 0–8. With Switch Count also 0, the Switches & Sensors page is removed and sensors aren't polled. |
-| Poll Interval | 3 | Seconds between light and room polls, 1–60. |
-| Transition Time | 4 | Fade time for every command, in 100 ms steps (4 = 400 ms, Hue's default). |
+| Poll Interval (seconds) | 3 | Seconds between light and room polls, 1–60. |
+| Transition Time (x100 ms) | 4 | Fade time for commands, in 100 ms steps (4 = 400 ms, Hue's default). Turning off never fades: see below. |
 
 ## How it talks to the bridge
 
 - **API:** Hue CLIP v1 (`/api/<key>/...`) over HTTP. Every current Hue Bridge serves it, and plain HTTP avoids depending on certificate handling in the Core's HTTP client.
 - **Feedback:** polls `/lights` and `/groups` every Poll Interval, `/sensors` every 0.5 s (when there are switch or motion slots), and `/scenes` about once a minute.
 - **Pacing:** commands are queued and sent one per 125 ms, with room/zone commands at least 1 s apart, so commands and polls stay inside Hue's published limits. Changes to the same light merge in the queue, so a fader drag sends only its latest value.
+- **Off never fades.** An off command with a fade time makes Hue fade the light to its minimum and store that, so the light would come back on at 1 %. Off commands go out without one, and All On, a light's ON, or a room's ON bring each light back at the brightness it had.
 - **Hold-off:** after a change, polls leave that light's or room's controls alone for 3 s, so a fader doesn't jump back mid-drag.
 - **Failures:** if the bridge stops answering, Online goes off, Status says why, and every control keeps its last value until the bridge answers again.
 

@@ -9,7 +9,7 @@
 
 PluginInfo = {
     Name = "Smart Spaces WI~Philips Hue",
-    Version = "1.2.0",
+    Version = "1.3.0",
     -- No version in the Id: Designer matches placed instances to the installed plugin by Id, so a
     -- stable Id lets a new version update a design in place instead of needing a re-drag.
     Id = "smartspaces.philips-hue",
@@ -29,8 +29,9 @@ MAX_MOTION = 8
 SWITCH_BUTTONS = 4
 
 -- Per-slot control fields. Shared by the controls, the layout and the runtime.
-LIGHT_FIELDS = { "Id", "Name", "On", "Reach", "Bri", "Ct", "Hue", "Sat" }
-GROUP_FIELDS = { "Id", "Name", "On", "Bri", "Scene" }
+LIGHT_FIELDS = { "Id", "Name", "On", "Reach", "Bri", "Ct", "Hue", "Sat", "BriV", "CtV", "HueV", "SatV" }
+GROUP_FIELDS = { "Id", "Name", "NameB", "On", "Bri", "BriV", "Scene", "Sc1", "Sc2", "Sc3", "Sc4", "Go1", "Go2", "Go3", "Go4" }
+SCENE_BUTTONS = 4
 SWITCH_FIELDS = { "Id", "Name", "Batt", "Reach", "Event", "P1", "P2", "P3", "P4", "H1", "H2", "H3", "H4" }
 MOTION_FIELDS = { "Id", "Name", "Presence", "Lux", "Temp", "Batt", "Reach" }
 
@@ -41,8 +42,12 @@ function MKey(i, field) return string.format("M%02d%s", i, field) end
 
 -- Human names for the pins (layout PrettyName). Slot numbers are two digits so the pin list sorts.
 LIGHT_LABELS = { Id = "ID", Name = "Name", On = "On", Reach = "Reachable", Bri = "Brightness",
-    Ct = "Color Temp", Hue = "Hue", Sat = "Saturation" }
-GROUP_LABELS = { Id = "ID", Name = "Name", On = "On", Bri = "Brightness", Scene = "Scene" }
+    Ct = "Color Temp", Hue = "Hue", Sat = "Saturation", BriV = "Brightness Readout",
+    CtV = "Color Temp Readout", HueV = "Hue Readout", SatV = "Saturation Readout" }
+GROUP_LABELS = { Id = "ID", Name = "Name", NameB = "Name (Scene Buttons page)", On = "On", Bri = "Brightness", BriV = "Brightness Readout",
+    Scene = "Scene", Sc1 = "Scene Button 1 Scene", Sc2 = "Scene Button 2 Scene", Sc3 = "Scene Button 3 Scene",
+    Sc4 = "Scene Button 4 Scene", Go1 = "Scene Button 1", Go2 = "Scene Button 2", Go3 = "Scene Button 3",
+    Go4 = "Scene Button 4" }
 SWITCH_LABELS = { Id = "ID", Name = "Name", Batt = "Battery", Reach = "Reachable", Event = "Last Event",
     P1 = "Button 1 Press", P2 = "Button 2 Press", P3 = "Button 3 Press", P4 = "Button 4 Press",
     H1 = "Button 1 Hold", H2 = "Button 2 Hold", H3 = "Button 3 Hold", H4 = "Button 4 Hold" }
@@ -51,13 +56,14 @@ MOTION_LABELS = { Id = "ID", Name = "Name", Presence = "Presence", Lux = "Light 
 GLOBAL_LABELS = { BridgeIP = "Bridge IP", AppKey = "App Key", Pair = "Pair", Refresh = "Refresh",
     AllOn = "All On", AllOff = "All Off", AllOnLights = "All On (Lights page)", AllOffLights = "All Off (Lights page)",
     AllOnGroups = "All On (Groups page)", AllOffGroups = "All Off (Groups page)",
+    AllOnScenes = "All On (Scene Buttons page)", AllOffScenes = "All Off (Scene Buttons page)",
     AllOnSensors = "All On (Sensors page)", AllOffSensors = "All Off (Sensors page)", Online = "Online", Status = "Status", BridgeLights = "Bridge Lights",
     BridgeGroups = "Bridge Rooms and Zones", BridgeSensors = "Bridge Switches and Sensors" }
 
 function PrettyFor(name)
-    local n, f = name:match("^L(%d%d)(%a+)$")
+    local n, f = name:match("^L(%d%d)(%w+)$")
     if n and LIGHT_LABELS[f] then return "Light " .. n .. " " .. LIGHT_LABELS[f] end
-    n, f = name:match("^G(%d%d)(%a+)$")
+    n, f = name:match("^G(%d%d)(%w+)$")
     if n and GROUP_LABELS[f] then return "Group " .. n .. " " .. GROUP_LABELS[f] end
     n, f = name:match("^S(%d%d)(%w+)$")
     if n and SWITCH_LABELS[f] then return "Switch " .. n .. " " .. SWITCH_LABELS[f] end
@@ -78,13 +84,17 @@ end
 PAGE_ALL_BUTTONS = {
     ["Lights"]             = { "AllOnLights",  "AllOffLights" },
     ["Groups"]             = { "AllOnGroups",  "AllOffGroups" },
+    ["Scene Buttons"]      = { "AllOnScenes",  "AllOffScenes" },
     ["Switches & Sensors"] = { "AllOnSensors", "AllOffSensors" },
     ["Setup"]              = { "AllOn",        "AllOff" },
 }
 
 function PageNames(props)
     local pages = { "Lights" }
-    if PropValue(props, "Group Count", 4) > 0 then table.insert(pages, "Groups") end
+    if PropValue(props, "Group Count", 4) > 0 then
+        table.insert(pages, "Groups")
+        table.insert(pages, "Scene Buttons")
+    end
     if PropValue(props, "Switch Count", 4) + PropValue(props, "Motion Count", 2) > 0 then
         table.insert(pages, "Switches & Sensors")
     end
@@ -102,8 +112,8 @@ function GetProperties()
         { Name = "Group Count",     Type = "integer", Min = 0, Max = MAX_GROUPS, Value = 4 },
         { Name = "Switch Count",    Type = "integer", Min = 0, Max = MAX_SWITCHES, Value = 4 },
         { Name = "Motion Count",    Type = "integer", Min = 0, Max = MAX_MOTION, Value = 2 },
-        { Name = "Poll Interval",   Type = "integer", Min = 1, Max = 60, Value = 3 },
-        { Name = "Transition Time", Type = "integer", Min = 0, Max = 50, Value = 4 },
+        { Name = "Poll Interval (seconds)",   Type = "integer", Min = 1, Max = 60, Value = 3 },
+        { Name = "Transition Time (x100 ms)", Type = "integer", Min = 0, Max = 50, Value = 4 },
     }
 end
 
@@ -125,6 +135,9 @@ function GetControls(props)
         table.insert(ctls, { Name = LKey(i, "Ct"),    ControlType = "Knob", ControlUnit = "Integer", Min = 2000, Max = 6500, PinStyle = "Both", UserPin = true })
         table.insert(ctls, { Name = LKey(i, "Hue"),   ControlType = "Knob", ControlUnit = "Integer", Min = 0, Max = 360, PinStyle = "Both", UserPin = true })
         table.insert(ctls, { Name = LKey(i, "Sat"),   ControlType = "Knob", ControlUnit = "Percent", Min = 0, Max = 100, PinStyle = "Both", UserPin = true })
+        for _, f in ipairs({ "BriV", "CtV", "HueV", "SatV" }) do
+            table.insert(ctls, { Name = LKey(i, f), ControlType = "Text" })
+        end
     end
 
     for i = 1, ng do
@@ -132,7 +145,13 @@ function GetControls(props)
         table.insert(ctls, { Name = GKey(i, "Name"),  ControlType = "Text", PinStyle = "Output", UserPin = true })
         table.insert(ctls, { Name = GKey(i, "On"),    ControlType = "Button", ButtonType = "Toggle", PinStyle = "Both", UserPin = true })
         table.insert(ctls, { Name = GKey(i, "Bri"),   ControlType = "Knob", ControlUnit = "Percent", Min = 0, Max = 100, PinStyle = "Both", UserPin = true })
+        table.insert(ctls, { Name = GKey(i, "BriV"),  ControlType = "Text" })
+        table.insert(ctls, { Name = GKey(i, "NameB"), ControlType = "Text" })
         table.insert(ctls, { Name = GKey(i, "Scene"), ControlType = "Text", PinStyle = "Both", UserPin = true })
+        for b = 1, SCENE_BUTTONS do
+            table.insert(ctls, { Name = GKey(i, "Sc" .. b), ControlType = "Text", PinStyle = "Both", UserPin = true })
+            table.insert(ctls, { Name = GKey(i, "Go" .. b), ControlType = "Button", ButtonType = "Trigger", PinStyle = "Input", UserPin = true })
+        end
     end
 
     for i = 1, PropValue(props, "Switch Count", 4) do
@@ -288,10 +307,14 @@ local function lightsLayout(props)
         { key = "Name",  head = "NAME",        w = 160 },
         { key = "On",    head = "",            w = 44 },
         { key = "Reach", head = "REACH",       w = 40 },
-        { key = "Bri",   head = "BRIGHTNESS",  w = 150 },
-        { key = "Ct",    head = "COLOR TEMP K", w = 130 },
-        { key = "Hue",   head = "HUE",         w = 130 },
-        { key = "Sat",   head = "SAT",         w = 110 },
+        { key = "Bri",   head = "BRIGHTNESS",  w = 120 },
+        { key = "BriV",  head = "",            w = 36 },
+        { key = "Ct",    head = "COLOR TEMP",  w = 110 },
+        { key = "CtV",   head = "",            w = 44 },
+        { key = "Hue",   head = "HUE",         w = 110 },
+        { key = "HueV",  head = "",            w = 36 },
+        { key = "Sat",   head = "SAT",         w = 100 },
+        { key = "SatV",  head = "",            w = 36 },
     })
     local row_h, row_step = 20, 26
 
@@ -312,6 +335,7 @@ local function lightsLayout(props)
             elseif c.key == "Name" then readout(layout, name, c.x, y, c.w, row_h)
             elseif c.key == "On" then toggle(layout, name, c.x, y, c.w, row_h)
             elseif c.key == "Reach" then led(layout, name, c.x + math.floor((c.w - 12) / 2), y + 4)
+            elseif c.key:find("V$") then readout(layout, name, c.x, y, c.w, row_h, "Right")
             else fader(layout, name, c.x, y, c.w, row_h) end
         end
     end
@@ -329,6 +353,7 @@ local function groupsLayout(props)
         { key = "Name",  head = "ROOM / ZONE", w = 160 },
         { key = "On",    head = "",           w = 44 },
         { key = "Bri",   head = "BRIGHTNESS", w = 150 },
+        { key = "BriV",  head = "",           w = 36 },
         { key = "Scene", head = "SCENE",      w = 200 },
     })
     local row_h, row_step = 20, 26
@@ -350,11 +375,40 @@ local function groupsLayout(props)
             elseif c.key == "Name" then readout(layout, name, c.x, y, c.w, row_h)
             elseif c.key == "On" then toggle(layout, name, c.x, y, c.w, row_h)
             elseif c.key == "Bri" then fader(layout, name, c.x, y, c.w, row_h)
+            elseif c.key == "BriV" then readout(layout, name, c.x, y, c.w, row_h, "Right")
             else layout[name] = { Style = "ComboBox", Position = { c.x, y }, Size = { c.w, row_h }, FontSize = 10 } end
         end
     end
 
     graphics[1].Size = { panel_w, top + n * row_step + pad }
+    return layout, graphics
+end
+
+-- Per room/zone: its name, then four scene buttons, each a scene picker above the button that
+-- recalls it. The buttons are the controls to put on a UCI.
+local function sceneButtonsLayout(props)
+    local layout, graphics = {}, {}
+    local n = PropValue(props, "Group Count", 4)
+    local pad, name_w, col_w, gap = 8, 150, 150, 8
+    local panel_w = pad + name_w + gap + SCENE_BUTTONS * (col_w + gap) - gap + pad
+    background(graphics, panel_w)
+    title(graphics, "PHILIPS HUE - SCENE BUTTONS", pad, panel_w)
+    local head_y = 34
+    header(graphics, "ROOM / ZONE", pad, head_y, name_w)
+    for b = 1, SCENE_BUTTONS do
+        header(graphics, "BUTTON " .. b .. ": SCENE", pad + name_w + gap + (b - 1) * (col_w + gap), head_y, col_w)
+    end
+    local top, block = head_y + 20, 56
+    for i = 1, n do
+        local y = top + (i - 1) * block
+        readout(layout, GKey(i, "NameB"), pad, y + 12, name_w, 20)
+        for b = 1, SCENE_BUTTONS do
+            local x = pad + name_w + gap + (b - 1) * (col_w + gap)
+            layout[GKey(i, "Sc" .. b)] = { Style = "ComboBox", Position = { x, y }, Size = { col_w, 20 }, FontSize = 10 }
+            trigger(layout, GKey(i, "Go" .. b), "Scene " .. b, x, y + 24, col_w, 24)
+        end
+    end
+    graphics[1].Size = { panel_w, top + n * block + pad }
     return layout, graphics
 end
 
@@ -516,6 +570,7 @@ function GetControlLayout(props)
     local page = PageNames(props)[page_index]
     local layout, graphics
     if page == "Groups" then layout, graphics = groupsLayout(props)
+    elseif page == "Scene Buttons" then layout, graphics = sceneButtonsLayout(props)
     elseif page == "Switches & Sensors" then layout, graphics = sensorsLayout(props)
     elseif page == "Setup" then layout, graphics = setupLayout(props)
     elseif page == "About" then layout, graphics = aboutLayout(props)
@@ -538,8 +593,8 @@ if Controls then
     NG = Properties["Group Count"].Value
     NS = Properties["Switch Count"].Value
     NM = Properties["Motion Count"].Value
-    POLL_S = Properties["Poll Interval"].Value
-    TRANSITION = Properties["Transition Time"].Value
+    POLL_S = Properties["Poll Interval (seconds)"].Value
+    TRANSITION = Properties["Transition Time (x100 ms)"].Value
     USE_HTTPS = Properties["Use HTTPS"].Value
 
     HOLD_S = 3           -- polls leave a slot alone this long after a change to it
@@ -596,6 +651,13 @@ if Controls then
         local id = rawId(field)
         if id == UNUSED then return "" end
         return id
+    end
+
+    -- A fader and the number beside it, set together (feedback and user moves alike).
+    READOUT = { Bri = "%d%%", Ct = "%dK", Hue = "%d\u{B0}", Sat = "%d%%" }
+    local function showLevel(ctl, readoutCtl, field, value)
+        if value ~= nil then ctl.Value = value end
+        readoutCtl.String = string.format(READOUT[field], math.floor(ctl.Value + 0.5))
     end
 
     -- A toggle's state and caption together: the layout's Legend is fixed, so the runtime writes it.
@@ -699,15 +761,23 @@ if Controls then
         L(i, "Reach").Boolean = s.reachable == true
         if holdL[i] and now() < holdL[i] then return end
         showOn(L(i, "On"), s.on == true)
-        if type(s.bri) == "number" then L(i, "Bri").Value = round(s.bri / 254 * 100) end
-        if type(s.ct) == "number" and s.ct > 0 then L(i, "Ct").Value = clamp(round(1e6 / s.ct), 2000, 6500) end
-        if type(s.hue) == "number" then L(i, "Hue").Value = round(s.hue / 65535 * 360) end
-        if type(s.sat) == "number" then L(i, "Sat").Value = round(s.sat / 254 * 100) end
+        if type(s.bri) == "number" then showLevel(L(i, "Bri"), L(i, "BriV"), "Bri", round(s.bri / 254 * 100)) end
+        if type(s.ct) == "number" and s.ct > 0 then showLevel(L(i, "Ct"), L(i, "CtV"), "Ct", clamp(round(1e6 / s.ct), 2000, 6500)) end
+        if type(s.hue) == "number" then showLevel(L(i, "Hue"), L(i, "HueV"), "Hue", round(s.hue / 65535 * 360)) end
+        if type(s.sat) == "number" then showLevel(L(i, "Sat"), L(i, "SatV"), "Sat", round(s.sat / 254 * 100)) end
+    end
+
+    -- A scene button's caption is the scene it's set to, or "Scene N" while unset.
+    local function showSceneButton(i, b)
+        local name = trim(G(i, "Sc" .. b).String)
+        G(i, "Go" .. b).Legend = name ~= "" and name or ("Scene " .. b)
     end
 
     local function applySceneChoices(i)
         local sc = scenes[idOf(G(i, "Id"))]
-        G(i, "Scene").Choices = sc and sc.names or {}
+        local names = sc and sc.names or {}
+        G(i, "Scene").Choices = names
+        for b = 1, SCENE_BUTTONS do G(i, "Sc" .. b).Choices = names end
     end
 
     local function applyGroup(i)
@@ -716,18 +786,21 @@ if Controls then
         applySceneChoices(i)
         if id == "" then
             G(i, "Name").String = ""
+            G(i, "NameB").String = ""
             return
         end
         if type(d) ~= "table" then
             G(i, "Name").String = "(no group " .. id .. " on the bridge)"
+            G(i, "NameB").String = G(i, "Name").String
             return
         end
         G(i, "Name").String = d.name or ""
+        G(i, "NameB").String = d.name or ""
         if holdG[i] and now() < holdG[i] then return end
         local s = type(d.state) == "table" and d.state or {}
         local a = type(d.action) == "table" and d.action or {}
         showOn(G(i, "On"), s.any_on == true)
-        if type(a.bri) == "number" then G(i, "Bri").Value = round(a.bri / 254 * 100) end
+        if type(a.bri) == "number" then showLevel(G(i, "Bri"), G(i, "BriV"), "Bri", round(a.bri / 254 * 100)) end
     end
 
     local function applyAll()
@@ -923,7 +996,9 @@ if Controls then
                 table.remove(pendingOrder, idx)
                 pendingBody[key] = nil
                 if entry.group then lastGroupSend = t end
-                entry.body.transitiontime = TRANSITION
+                -- Off with a transitiontime makes Hue fade to and store brightness 1, so the light
+                -- would come back on at 1 %. Off goes out without one.
+                if entry.body.on ~= false then entry.body.transitiontime = TRANSITION end
                 request("PUT", apiUrl(entry.path), entry.body, commandDone)
                 return
             end
@@ -966,6 +1041,15 @@ if Controls then
         return nil
     end
 
+    -- Pulse a Trigger output: :Trigger() where the control has it, else on for 0.2 s.
+    local function pulse(ctl)
+        local ok = pcall(function() ctl:Trigger() end)
+        if not ok then
+            ctl.Boolean = true
+            Timer.CallAfter(function() ctl.Boolean = false end, 0.2)
+        end
+    end
+
     local function clearHolds(i)
         for b = 1, SWITCH_BUTTONS do S(i, "H" .. b).Boolean = false end
         holdSeen[i] = {}
@@ -1003,11 +1087,13 @@ if Controls then
         end
         if seen.key == key then return end
         S(i, "Event").String = label
+        print(string.format("Switch %02d (%s): %s [buttonevent %s at %s]", i, d.name or id, label ~= "" and label or "unknown event",
+            tostring(st.buttonevent), tostring(st.lastupdated)))
         if not b then return end
         if kind == "short release" then
             S(i, "H" .. b).Boolean = false
             holdSeen[i][b] = nil
-            S(i, "P" .. b):Trigger()
+            pulse(S(i, "P" .. b))
         elseif kind == "hold" then
             S(i, "H" .. b).Boolean = true
             holdSeen[i][b] = now()
@@ -1141,36 +1227,60 @@ if Controls then
         pairAttempt()
     end
 
+    -- Recall a group slot's scene by its name in the scene list.
+    function recallScene(i, name)
+        local sc = scenes[idOf(G(i, "Id"))]
+        local sid = sc and sc.ids[name]
+        if not sid then
+            setStatus("No scene named '" .. name .. "' in group slot " .. i, true)
+            return
+        end
+        queueGroup(i, { scene = sid })
+    end
+
     -- ------------------------------------------------------------ handlers
     for i = 1, NL do
         L(i, "On").EventHandler = function(c) showOn(c, c.Boolean); queueLight(i, { on = c.Boolean }) end
         L(i, "Bri").EventHandler = function(c)
+            showLevel(c, L(i, "BriV"), "Bri")
             local body, on = briBody(c.Value)
             showOn(L(i, "On"), on)
             queueLight(i, body)
         end
-        L(i, "Ct").EventHandler = function(c) queueLight(i, { ct = clamp(round(1e6 / c.Value), 153, 500) }) end
-        L(i, "Hue").EventHandler = function(c) queueLight(i, { hue = clamp(round(c.Value / 360 * 65535), 0, 65535) }) end
-        L(i, "Sat").EventHandler = function(c) queueLight(i, { sat = clamp(round(c.Value / 100 * 254), 0, 254) }) end
+        L(i, "Ct").EventHandler = function(c)
+            showLevel(c, L(i, "CtV"), "Ct")
+            queueLight(i, { ct = clamp(round(1e6 / c.Value), 153, 500) })
+        end
+        L(i, "Hue").EventHandler = function(c)
+            showLevel(c, L(i, "HueV"), "Hue")
+            queueLight(i, { hue = clamp(round(c.Value / 360 * 65535), 0, 65535) })
+        end
+        L(i, "Sat").EventHandler = function(c)
+            showLevel(c, L(i, "SatV"), "Sat")
+            queueLight(i, { sat = clamp(round(c.Value / 100 * 254), 0, 254) })
+        end
         L(i, "Id").EventHandler = function() holdL[i] = nil; applyLight(i) end
     end
 
     for i = 1, NG do
         G(i, "On").EventHandler = function(c) showOn(c, c.Boolean); queueGroup(i, { on = c.Boolean }) end
         G(i, "Bri").EventHandler = function(c)
+            showLevel(c, G(i, "BriV"), "Bri")
             local body, on = briBody(c.Value)
             showOn(G(i, "On"), on)
             queueGroup(i, body)
         end
-        G(i, "Scene").EventHandler = function(c)
-            local name = c.String
-            local sc = scenes[idOf(G(i, "Id"))]
-            local sid = sc and sc.ids[name]
-            if not sid then
-                setStatus("No scene named '" .. name .. "' in group slot " .. i, true)
-                return
+        G(i, "Scene").EventHandler = function(c) recallScene(i, c.String) end
+        for b = 1, SCENE_BUTTONS do
+            G(i, "Sc" .. b).EventHandler = function() showSceneButton(i, b) end
+            G(i, "Go" .. b).EventHandler = function()
+                local name = trim(G(i, "Sc" .. b).String)
+                if name == "" then
+                    setStatus("Group slot " .. i .. " scene button " .. b .. " has no scene set", true)
+                    return
+                end
+                recallScene(i, name)
             end
-            queueGroup(i, { scene = sid })
         end
         G(i, "Id").EventHandler = function() holdG[i] = nil; applyGroup(i) end
     end
@@ -1207,6 +1317,13 @@ if Controls then
     Controls.Online.Boolean = false
     for i = 1, NL do showOn(L(i, "On"), L(i, "On").Boolean) end
     for i = 1, NG do showOn(G(i, "On"), G(i, "On").Boolean) end
+    for i = 1, NL do
+        for _, f in ipairs({ "Bri", "Ct", "Hue", "Sat" }) do showLevel(L(i, f), L(i, f .. "V"), f) end
+    end
+    for i = 1, NG do
+        showLevel(G(i, "Bri"), G(i, "BriV"), "Bri")
+        for b = 1, SCENE_BUTTONS do showSceneButton(i, b) end
+    end
 
     pollTimer = Timer.New()
     pollTimer.EventHandler = function() poll() end
