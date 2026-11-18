@@ -38,7 +38,7 @@
 -- 11. A layout entry's PrettyName is the name the Control Pins list shows. Confirmed.
 -- 12. A Knob shown with layout Style "Text" (read-only) displays its value as text. Confirmed.
 -- 13. An LED declared as an output pin drives its pin from .Boolean, so a 0.5 s Press pulse reaches
---     wired logic. Not confirmed.
+--     wired logic. Confirmed.
 -- 14. Hue /sensors: a ZLLSwitch reports buttonevent = button * 1000 + 0 press / 1 hold / 2 short
 --     release / 3 long release, with a new state.lastupdated (1 s resolution) per event. Confirmed
 --     for press and short release on Hue Dimmer v2 (RWL022); holds not confirmed. A ZGPSwitch

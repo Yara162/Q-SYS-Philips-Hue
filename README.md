@@ -21,9 +21,9 @@ Made by YZ at the SmartSpaces programming department. Provided as-is, under the 
 | Hue Bridge | Hue Bridge v2 (BSB002), firmware 1978688000, API 1.78 |
 | Switches | Hue Dimmer switch v2 (RWL022) |
 
-Confirmed on that hardware: pairing, light and room control and feedback, scenes and scene buttons, All On / All Off, and switch presses.
+Confirmed on that hardware: pairing, light and room control and feedback, scenes and scene buttons, All On / All Off, switch presses (Press outputs driving wired logic), and Use HTTPS.
 
-Not yet tried on hardware: motion sensors, switch holds, a Press output wired into Q-SYS logic, the Hue Tap and other switch types, Use HTTPS, and the bridge going offline mid-session.
+Not yet tried on hardware: motion sensors, switch holds, the Hue Tap and other switch types, and the bridge going offline mid-session.
 
 ## Install
 
@@ -107,7 +107,7 @@ The plugin reads the bridge's sensors twice a second. It takes switches the brid
 |---|---|---|
 | Bridge IP | *empty* | Fills the Bridge IP field when it's empty at start. |
 | App Key | *empty* | Fills the App Key field when it's empty at start. |
-| Use HTTPS | off | Talk to the bridge over `https://`. Needs the Core to accept the bridge's self-signed certificate. |
+| Use HTTPS | off | Talk to the bridge over `https://`. Works on the tested Core and bridge. |
 | Light Count | 8 | Light slots, 1–32. |
 | Group Count | 4 | Room/zone slots, 0–16. 0 removes the Rooms & Zones and Scene Buttons pages. |
 | Scene Buttons per Room | 4 | Scene buttons per room/zone, 0–8, four to a row. The On and Off buttons are always there. |
@@ -140,6 +140,9 @@ lua5.3 tests/sim.lua philips-hue.qplug
 
 - `structural.py` checks the file as text: balanced blocks, every control and property the runtime uses is declared, no local function called before it's defined, and the `.lua` and `.qplug` are identical.
 - `sim.lua` runs the real plugin under Lua 5.3 against stand-ins for the Q-SYS runtime and a fake Hue Bridge, and checks every page's layout and the behaviour above. Its header lists what the stand-ins assume about Q-SYS and the bridge, and which of those held on the hardware above.
+- `soak.lua` runs the plugin for hours of simulated time (continuous polling, switch presses, fader moves, scene recalls, a bridge outage every hour) and checks that its memory stays flat: `lua5.3 tests/soak.lua philips-hue.qplug 8`. Over 8 simulated hours it holds at about 600 KB.
+
+The plugin writes no files. Its only output is lines in the Debug Output: one per switch event, one per sensor poll failure and recovery, and, with Log Sensor Data on, raw switch values when they change plus a summary every 10 s.
 
 `assets/` holds the SmartSpaces logo; the About page carries it embedded in the plugin.
 
