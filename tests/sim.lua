@@ -1,69 +1,54 @@
 -- Runs the Philips Hue plugin's real code under Lua 5.3 against stand-ins for the Q-SYS runtime and
--- a fake Hue Bridge, and checks the layout and the behaviour the task doc promises. Usage (from the
+-- a fake Hue Bridge, and checks every page's layout and the plugin's behaviour. Usage (from the
 -- plugin folder):
 --   lua5.3 tests/sim.lua philips-hue.qplug
 -- Prints PASS/FAIL per check; exits 0 when all pass.
 
--- ASSUMPTIONS: what the stand-ins below believe about Q-SYS and the Hue Bridge. A green run proves
--- the plugin's logic is right if these hold, nothing more. Each UNVERIFIED line is a step in the
--- Core test (Tasks/q-sys - build philips hue.md); a Core result that contradicts a line means the
--- stand-in gets fixed so the sim reproduces the Core, then the line is updated.
+-- ASSUMPTIONS: what the stand-ins believe about Q-SYS and the Hue Bridge. A green run shows the
+-- plugin's logic is right if these hold, nothing more. "Confirmed" means it held on the hardware
+-- listed in the README's Tested On section; "not confirmed" lines are the places where the sim can
+-- pass and a Core can still behave differently. If a Core contradicts a line, fix the stand-in so
+-- the sim reproduces the Core, then fix the plugin.
 --
 --  1. GetControlLayout is called once per page with props["page_index"].Value (1-based), and the
---     props carry the plugin's own properties (Light Count, Group Count).
---       verified QDS 10.5.1, 2026-11-12 for page_index (system-tools); property props UNVERIFIED here.
+--     props carry the plugin's own properties. Confirmed.
 --  2. Writing .Value / .Boolean / .String / .Choices from Lua does not fire that control's
---     EventHandler; only a user (or a wired pin) does.
---       UNVERIFIED here (standard Q-SYS behaviour): Core test step 3.
+--     EventHandler; only a user or a wired pin does. Confirmed (polling sends no commands).
 --  3. Setting .Boolean sets .Value to 1/0 and the reverse; a Knob clamps .Value to its Min/Max.
---       UNVERIFIED here (standard Q-SYS behaviour).
---  4. rapidjson.encode writes a Lua integer as a JSON integer (100, not 100.0), and decode gives
---     integers back for JSON integers. The fake bridge rejects a float where Hue wants an integer.
---       UNVERIFIED: Core test step 2.
+--     Standard Q-SYS behaviour.
+--  4. rapidjson.encode writes a Lua integer as a JSON integer (100, not 100.0). The fake bridge
+--     rejects a float where Hue wants an integer. Confirmed.
 --  5. HttpClient.Get / HttpClient.Upload{Method=...} call EventHandler(tbl, code, data, err) once per
---     request, including on timeout or an unreachable host (code ~= 200).
---       UNVERIFIED for the timeout case: Core test step 7.
---  6. A Text control shown as ComboBox / ListBox takes a runtime .Choices list, and picking an item
---     sets .String and fires the EventHandler.
---       UNVERIFIED here: Core test step 4.
---  7. Timer.Now() is a seconds clock that only moves forward during a run; Timer.New():Start(s)
---     fires every s seconds until Stop.
---       verified (reference § Timer); the sim drives both from one fake clock.
+--     request, including on a timeout or an unreachable host (code ~= 200). Confirmed for success;
+--     the timeout case is not confirmed.
+--  6. A Text control shown as a ComboBox or ListBox takes a runtime .Choices list, and picking an
+--     item sets .String and fires the EventHandler. Confirmed.
+--  7. Timer.Now() is a seconds clock; Timer.New():Start(s) fires every s seconds until Stop;
+--     Timer.CallAfter(f, s) calls f once. The sim drives all three from one fake clock.
 --  8. The Hue Bridge v1 API behaves as the fake bridge does: GET /lights, /groups, /scenes keyed by
 --     id strings; PUT /lights/<id>/state and /groups/<id>/action answer an array of success/error
 --     items; error 1 = unauthorized user, 101 = link button not pressed, 6 = parameter not
 --     available, 7 = invalid value; POST /api {devicetype} gives {success={username}} after the
 --     link button; groups/0 is every light; scenes of type GroupScene carry their group id.
---       UNVERIFIED against a real bridge (from the Hue v1 API documentation): Core test steps 1, 4.
---  9. A runtime .Color on any control: the stand-ins don't model it. The sim checks the runtime
---     never sets one (on a Core a Text control's .Color paints the field too).
---       verified QDS 10.5.1, 2026-11-12 (system-tools).
--- 10. Toggle-button layout keys Color / OffColor / UnlinkOffColor render as lit vs unlit. The sim
---     can't see rendering.
---       verified QDS (Core test 1, 2026-11-18): the ON buttons light with the state.
--- 11. A toggle's layout Legend is fixed; writing .Legend at runtime changes the button's caption.
---       UNVERIFIED: the fixed caption was seen on the Core (always "ON"); the runtime write is the fix.
--- 12. A layout entry's PrettyName is the name the Control Pins list and the pins show.
---       verified QDS (Core test 2, 2026-11-18): pins read "Light 03 Brightness" etc.
--- 13. A Trigger button declared as an output pin pulses its pin when the runtime calls :Trigger().
---       UNVERIFIED: Core test step 14.
--- 14. A Knob shown with layout Style "Text" (read-only) displays its value as text.
---       UNVERIFIED: Core test step 15 (battery, lux, temperature readouts).
--- 15. The bridge's /sensors: ZLLSwitch buttonevent = button*1000 + 0 press / 1 hold / 2 short
---     release / 3 long release; ZGPSwitch (Tap) 34/16/17/18 = buttons 1-4; state.lastupdated has 1 s
---     resolution; a motion sensor is ZLLPresence + ZLLLightLevel + ZLLTemperature sharing the
---     uniqueid prefix; lux = 10^((lightlevel-1)/10000); temperature in 0.01 C.
---       UNVERIFIED against a real bridge (Hue v1 API documentation): Core test step 13.
--- 16. A layout graphic of Type "Image" shows the base64 PNG in its Image key at the given Size.
---       UNVERIFIED: Core test step 16 (About page logo).
--- 17. Hue: on=false with a transitiontime fades the light and stores brightness 1, so it comes
---     back on at 1 %. The fake bridge does this.
---       verified on Yara's bridge (BSB002, 1.78), 2026-11-18: All Off then All On came back at 1 %.
--- 18. print() writes a line to the plugin's Debug Output; Timer.CallAfter(f, s) calls f once.
---       verified (reference § Timer, § Log); the sim captures print.
--- 19. RWL022 dimmers report v1 buttonevent codes x000/x002 and a new lastupdated per event,
---       verified 2026-11-18 by reading Yara's bridge /sensors while pressing (4002, 1000->1002, 3002).
---       Hold codes (x001/x003) not yet seen on the real bridge.
+--     Confirmed.
+--  9. The stand-ins don't model a runtime .Color. On a Core, a Text control's .Color paints its field
+--     as well as its text, so the sim checks the runtime never sets one. Observed on QDS 10.5.1.
+-- 10. Toggle-button layout keys Color / OffColor / UnlinkOffColor render lit vs unlit, and a
+--     runtime .Legend write changes the caption. Confirmed.
+-- 11. A layout entry's PrettyName is the name the Control Pins list shows. Confirmed.
+-- 12. A Knob shown with layout Style "Text" (read-only) displays its value as text. Confirmed.
+-- 13. An LED declared as an output pin drives its pin from .Boolean, so a 0.5 s Press pulse reaches
+--     wired logic. Not confirmed.
+-- 14. Hue /sensors: a ZLLSwitch reports buttonevent = button * 1000 + 0 press / 1 hold / 2 short
+--     release / 3 long release, with a new state.lastupdated (1 s resolution) per event. Confirmed
+--     for press and short release on Hue Dimmer v2 (RWL022); holds not confirmed. A ZGPSwitch
+--     (Tap) reports 34/16/17/18 for buttons 1-4: not confirmed.
+-- 15. A Hue motion sensor is a ZLLPresence, a ZLLLightLevel and a ZLLTemperature sharing a uniqueid
+--     prefix; lux = 10^((lightlevel - 1) / 10000); temperature is in 0.01 C. Not confirmed.
+-- 16. A layout graphic of Type "Image" shows the base64 PNG in its Image key. Not confirmed.
+-- 17. Hue: on=false with a transitiontime fades the light and stores brightness 1, so it comes back
+--     on at 1 %. The fake bridge does the same. Confirmed.
+-- 18. print() writes a line to the plugin's Debug Output.
 
 local PLUGIN = arg[1] or "philips-hue.qplug"
 local chunk = assert(loadfile(PLUGIN))
@@ -339,13 +324,13 @@ end
 -- ---------------------------------------------------------------- controls
 local COLOR_WRITES = {}
 local function control(decl)
-    local raw = { String = "", Value = 0, Boolean = false, Choices = nil, Legend = nil, EventHandler = nil, triggers = 0 }
-    raw.Trigger = function() raw.triggers = raw.triggers + 1 end
+    local raw = { String = "", Value = 0, Boolean = false, Choices = nil, Legend = nil, EventHandler = nil, rises = 0 }
     local c = {}
     setmetatable(c, {
         __index = raw,
         __newindex = function(_, k, v)
             if k == "Boolean" then
+                if v and not raw.Boolean then raw.rises = raw.rises + 1 end   -- off -> on edges, for pulse counting
                 raw.Boolean = v and true or false; raw.Value = v and 1 or 0
             elseif k == "Value" then
                 if decl.Min then v = math.max(decl.Min, math.min(decl.Max, v)) end
@@ -417,7 +402,8 @@ local function count(method, pattern)
     for _, r in ipairs(HTTP_LOG) do if r.method == method and (not pattern or r.url:find(pattern)) then n = n + 1 end end
     return n
 end
-local function triggers(name) return Controls[name].triggers end
+-- How many times a Press LED has lit (each press is one off -> on edge).
+local function triggers(name) return Controls[name].rises end
 -- A button event on the bridge, stamped with the bridge's 1 s resolution lastupdated.
 local function switchEvent(id, ev)
     BRIDGE.sensors[id].state.buttonevent = ev
@@ -843,7 +829,7 @@ ok, err = boot({ ["Bridge IP"] = "192.168.1.50", ["App Key"] = "validkey", ["Gro
 check("with no Groups or Sensors pages, their All On/Off buttons aren't declared", ok and Controls.AllOnGroups == nil and Controls.AllOnSensors == nil and Controls.AllOnLights ~= nil, err)
 
 
--- ---------------------------------------------------------------- v1.3: readouts, scene buttons, switch log
+-- ---------------------------------------------------------------- fader readouts and scene buttons
 freshBridge()
 boot({ ["Bridge IP"] = "192.168.1.50", ["App Key"] = "validkey" })
 check("number readouts beside the faders follow the bridge", ctl("L01BriV").String == "50%" and ctl("L01CtV").String == "2732K" and ctl("L04HueV").String == "5\u{B0}" and ctl("L04SatV").String == "39%" and ctl("G01BriV").String == "100%",
@@ -873,7 +859,7 @@ for name, c in pairs(Controls) do panel13[name] = c.String end
 boot({ ["Bridge IP"] = "192.168.1.50", ["App Key"] = "validkey" }, panel13)
 check("scene button settings and captions survive a restart", ctl("G01Sc2").String == "Relax" and ctl("G01Go2").Legend == "Relax", ctl("G01Go2").Legend)
 
--- v1.4: scene buttons per room is a property; each room has On and Off before its scene buttons
+-- ---------------------------------------------------------------- scene buttons per room; room On and Off
 checkLayout("6 scene buttons", { ["Scene Buttons per Room"] = 6 })
 checkLayout("8 scene buttons, 16 rooms", { ["Scene Buttons per Room"] = 8, ["Group Count"] = 16 })
 checkLayout("no scene buttons", { ["Scene Buttons per Room"] = 0 })
@@ -899,7 +885,7 @@ gp = putsTo("/groups/1/action")
 check("a room's Off button turns that room off, without a fade", gp[#gp].body.on == false and gp[#gp].body.transitiontime == nil and BRIDGE.lights["1"].state.on == false and not ctl("G01On").Boolean)
 check("On and Off buttons have human pin names", PrettyFor("G03OnB") == "Group 03 On Button" and PrettyFor("G03OffB") == "Group 03 Off Button" and PrettyFor("G03Go7") == "Group 03 Scene Button 7" and PrettyFor("G03Sc7") == "Group 03 Scene Button 7 Scene")
 
--- v1.4: sensor poll status line
+-- ---------------------------------------------------------------- sensor poll status line
 freshBridge()
 PRINTED = {}
 boot({ ["Bridge IP"] = "192.168.1.50", ["App Key"] = "validkey" })
@@ -919,7 +905,7 @@ freshBridge()
 boot({ ["Bridge IP"] = "192.168.1.50", ["App Key"] = "validkey", ["Switch Count"] = 0, ["Motion Count"] = 0 })
 check("no status line control without switch or motion slots", Controls.SensorStatus == nil)
 
--- v1.4.1: Log Sensor Data prints what the Core received for each switch
+-- ---------------------------------------------------------------- Log Sensor Data
 freshBridge()
 PRINTED = {}
 boot({ ["Bridge IP"] = "192.168.1.50", ["App Key"] = "validkey", ["Log Sensor Data"] = true })
@@ -935,7 +921,7 @@ boot({ ["Bridge IP"] = "192.168.1.50", ["App Key"] = "validkey" })
 advance(11)
 check("with it off, nothing is printed", linesMatching("^Sensor data") == 0)
 
--- the switch path on the Core: every new event goes to the debug output; Press still pulses if :Trigger() is missing
+-- ---------------------------------------------------------------- Press LEDs and the event log
 freshBridge()
 boot({ ["Bridge IP"] = "192.168.1.50", ["App Key"] = "validkey" })
 advance(1)
@@ -943,15 +929,25 @@ PRINTED = {}
 switchEvent("2", 2002); advance(0.6)
 local logged = table.concat(PRINTED, "\n")
 check("a new switch event is written to the debug output", logged:find("Switch 01 %(Office dimmer%): Button 2 short release %[buttonevent 2002") ~= nil, logged)
-rawset(getmetatable(Controls.S01P3).__index, "Trigger", nil)
+check("Press is an LED output, not a button", DECLARED["S01P1"].ControlType == "Indicator" and DECLARED["S01P1"].IndicatorType == "Led" and DECLARED["S01P1"].PinStyle == "Output")
+do
+    local pr = props(withProps({}))
+    local pages = GetPages(pr)
+    for page = 1, #pages do
+        if pages[page].name == "Switches & Sensors" then
+            pr["page_index"] = { Value = page }
+            local layout = GetControlLayout(pr)
+            check("Press shows as an LED on the panel", layout["S01P1"].Style == "Led" and layout["S03P4"].Style == "Led", layout["S01P1"].Style)
+        end
+    end
+end
 advance(1); switchEvent("2", 3002)
 local wentOn, onFor = false, 0
-for _ = 1, 20 do
+for _ = 1, 30 do
     advance(0.05)
     if Controls.S01P3.Boolean then wentOn = true; onFor = onFor + 0.05 end
 end
-check("without :Trigger(), Press turns on for a moment instead", wentOn)
-check("and back off after about 0.2 s", Controls.S01P3.Boolean == false and onFor > 0.1 and onFor < 0.35, onFor)
-
+check("a press lights its Press LED", wentOn)
+check("for about half a second", Controls.S01P3.Boolean == false and onFor > 0.35 and onFor < 0.7, onFor)
 io.write(("\n%d passed, %d failed\n"):format(passed, failed))
 os.exit(failed == 0 and 0 or 1)

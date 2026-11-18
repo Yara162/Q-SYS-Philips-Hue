@@ -1,15 +1,26 @@
--- Philips Hue for Q-SYS: control Hue lights, rooms and zones, and read Hue switches and motion
--- sensors, through a Hue Bridge on the local network. Talks to the bridge's CLIP v1 API over HTTP,
--- polls for feedback, and pairs from the panel.
+-- Philips Hue for Q-SYS
+-- Controls Hue lights, rooms and zones, and reads Hue switches and motion sensors, through a Hue
+-- Bridge on the local network.
+--
+-- BRIDGE: Hue CLIP v1 API over HTTP. Pairs from the Setup page (press Pair, then the bridge's link
+--   button). Polls lights and rooms every Poll Interval, sensors every 0.5 s, scenes about once a
+--   minute. Commands are queued and paced inside Hue's rate limits.
+-- PAGES: Lights, Rooms & Zones, Scene Buttons, Switches & Sensors, Setup, About. Slot counts are
+--   properties; empty slots fill from the bridge in ID order, and "-" keeps a slot blank.
+-- SWITCHES: read-only. Press and Hold are LED outputs driven by the physical switch; Hue has no way
+--   for an app to press a switch.
+-- SCOPE: no Hue Entertainment (streaming), no v2 event stream, no bridge discovery (enter the IP).
+--
+-- INSTALL: double-click philips-hue.qplug, or import philips-hue.lua (an identical copy) via
+--   Tools > Design Resources > Import; then drag Philips Hue from the User tree.
 --
 -- Made by YZ at the SmartSpaces programming department. Provided as-is, without warranty.
 -- Copyright (c) 2026 YZ, SmartSpaces. MIT License: see LICENSE, or the plugin's About page.
-
--- Install via Tools > Design Resources > Import, then drag from the User tree.
+-- Tested on a Core Nano (10.5.1) with a Hue Bridge v2 (BSB002, API 1.78): see the README.
 
 PluginInfo = {
     Name = "Smart Spaces WI~Philips Hue",
-    Version = "1.4.1",
+    Version = "1.5.0",
     -- No version in the Id: Designer matches placed instances to the installed plugin by Id, so a
     -- stable Id lets a new version update a design in place instead of needing a re-drag.
     Id = "smartspaces.philips-hue",
@@ -169,7 +180,7 @@ function GetControls(props)
         table.insert(ctls, { Name = SKey(i, "Reach"), ControlType = "Indicator", IndicatorType = "Led", PinStyle = "Output", UserPin = true })
         table.insert(ctls, { Name = SKey(i, "Event"), ControlType = "Text", PinStyle = "Output", UserPin = true })
         for b = 1, SWITCH_BUTTONS do
-            table.insert(ctls, { Name = SKey(i, "P" .. b), ControlType = "Button", ButtonType = "Trigger", PinStyle = "Output", UserPin = true })
+            table.insert(ctls, { Name = SKey(i, "P" .. b), ControlType = "Indicator", IndicatorType = "Led", PinStyle = "Output", UserPin = true })
             table.insert(ctls, { Name = SKey(i, "H" .. b), ControlType = "Indicator", IndicatorType = "Led", PinStyle = "Output", UserPin = true })
         end
     end
@@ -226,6 +237,7 @@ local UI = {
     Outline = { 95, 95, 95 },
     White   = { 255, 255, 255 },
     Green   = { 0, 200, 0 },
+    Amber   = { 230, 150, 30 },
     LedOff  = { 60, 60, 60 },
 }
 
@@ -288,10 +300,10 @@ local function trigger(layout, name, legend, x, y, w, h)
     }
 end
 
-local function led(layout, name, x, y)
+local function led(layout, name, x, y, color)
     layout[name] = {
         Style = "Led", Position = { x, y }, Size = { 12, 12 }, CornerRadius = 6,
-        Color = UI.Green, OffColor = UI.LedOff, UnlinkOffColor = true,
+        Color = color or UI.Green, OffColor = UI.LedOff, UnlinkOffColor = true,
     }
 end
 
@@ -495,7 +507,7 @@ local function sensorsLayout(props)
         header(graphics, "NAME", x_name, hy, w_name)
         header(graphics, "BATT", x_batt, hy, 44, "Center")
         header(graphics, "REACH", x_reach, hy, 40, "Center")
-        header(graphics, "BUTTONS: PRESS / HOLD", x_btn, hy, SWITCH_BUTTONS * btn_step, "Left")
+        header(graphics, "BUTTONS: PRESS (AMBER) / HOLD", x_btn, hy, SWITCH_BUTTONS * btn_step, "Left")
         header(graphics, "LAST EVENT", x_event, hy, 180)
         local top = hy + 20
         for i = 1, ns do
@@ -506,8 +518,12 @@ local function sensorsLayout(props)
             led(layout, SKey(i, "Reach"), x_reach + 14, ry + 4)
             for b = 1, SWITCH_BUTTONS do
                 local bx = x_btn + (b - 1) * btn_step
-                trigger(layout, SKey(i, "P" .. b), tostring(b), bx, ry, 26, row_h)
-                led(layout, SKey(i, "H" .. b), bx + 30, ry + 4)
+                table.insert(graphics, {
+                    Type = "Label", Text = tostring(b), Position = { bx, ry + 2 }, Size = { 10, 16 },
+                    Color = UI.Dim, FontSize = 10, IsBold = true, HTextAlign = "Left",
+                })
+                led(layout, SKey(i, "P" .. b), bx + 12, ry + 4, UI.Amber)
+                led(layout, SKey(i, "H" .. b), bx + 28, ry + 4)
             end
             readout(layout, SKey(i, "Event"), x_event, ry, 180, row_h)
         end
@@ -1064,13 +1080,16 @@ if Controls then
         return nil
     end
 
-    -- Pulse a Trigger output: :Trigger() where the control has it, else on for 0.2 s.
+    -- A Press LED lights for PRESS_PULSE_S per press; a second press inside that time restarts it.
+    PRESS_PULSE_S = 0.5
+    pulseToken = {}
     local function pulse(ctl)
-        local ok = pcall(function() ctl:Trigger() end)
-        if not ok then
-            ctl.Boolean = true
-            Timer.CallAfter(function() ctl.Boolean = false end, 0.2)
-        end
+        local token = (pulseToken[ctl] or 0) + 1
+        pulseToken[ctl] = token
+        ctl.Boolean = true
+        Timer.CallAfter(function()
+            if pulseToken[ctl] == token then ctl.Boolean = false end
+        end, PRESS_PULSE_S)
     end
 
     local function clearHolds(i)
