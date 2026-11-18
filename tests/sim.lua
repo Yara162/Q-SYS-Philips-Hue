@@ -368,7 +368,7 @@ local function props(t)
 end
 
 local DEFAULT_PROPS = { ["Bridge IP"] = "", ["App Key"] = "", ["Use HTTPS"] = false, ["Light Count"] = 8,
-    ["Group Count"] = 4, ["Switch Count"] = 4, ["Motion Count"] = 2, ["Poll Interval (seconds)"] = 3, ["Transition Time (x100 ms)"] = 4 }
+    ["Group Count"] = 4, ["Scene Buttons per Room"] = 4, ["Switch Count"] = 4, ["Motion Count"] = 2, ["Poll Interval (seconds)"] = 3, ["Transition Time (x100 ms)"] = 4 }
 
 local function withProps(over)
     local t = {}
@@ -872,6 +872,52 @@ local panel13 = {}
 for name, c in pairs(Controls) do panel13[name] = c.String end
 boot({ ["Bridge IP"] = "192.168.1.50", ["App Key"] = "validkey" }, panel13)
 check("scene button settings and captions survive a restart", ctl("G01Sc2").String == "Relax" and ctl("G01Go2").Legend == "Relax", ctl("G01Go2").Legend)
+
+-- v1.4: scene buttons per room is a property; each room has On and Off before its scene buttons
+checkLayout("6 scene buttons", { ["Scene Buttons per Room"] = 6 })
+checkLayout("8 scene buttons, 16 rooms", { ["Scene Buttons per Room"] = 8, ["Group Count"] = 16 })
+checkLayout("no scene buttons", { ["Scene Buttons per Room"] = 0 })
+freshBridge()
+ok, err = boot({ ["Bridge IP"] = "192.168.1.50", ["App Key"] = "validkey", ["Scene Buttons per Room"] = 6 })
+check("Scene Buttons per Room 6 gives six buttons per room", ok and Controls.G01Go6 ~= nil and Controls.G04Sc6 ~= nil and Controls.G01Go7 == nil, err)
+check("the extra buttons get the room's scenes and a caption", table.concat(ctl("G01Sc6").Choices or {}, "|") == "Bright|Relax|Relax (2)" and ctl("G01Go6").Legend == "Scene 6")
+advance(1); user("G01Sc6", "String", "Bright"); press("G01Go6"); advance(1.2)
+check("button 6 recalls its scene", BRIDGE.recalled and BRIDGE.recalled.scene == "def", BRIDGE.recalled and BRIDGE.recalled.scene)
+ok, err = boot({ ["Bridge IP"] = "192.168.1.50", ["App Key"] = "validkey", ["Scene Buttons per Room"] = 2 })
+check("Scene Buttons per Room 2 gives two", ok and Controls.G01Go2 ~= nil and Controls.G01Go3 == nil, err)
+ok, err = boot({ ["Bridge IP"] = "192.168.1.50", ["App Key"] = "validkey", ["Scene Buttons per Room"] = 0 })
+check("0 leaves only On and Off on the Scene Buttons page", ok and Controls.G01Go1 == nil and Controls.G01OnB ~= nil, err)
+
+freshBridge()
+boot({ ["Bridge IP"] = "192.168.1.50", ["App Key"] = "validkey" })
+advance(1)
+press("G02OnB"); advance(1.2)
+local gp = putsTo("/groups/2/action")
+check("a room's On button turns that room on", #gp == 1 and gp[1].body.on == true and BRIDGE.lights["10"].state.on == true and ctl("G02On").Boolean, #gp)
+press("G01OffB"); advance(1.2)
+gp = putsTo("/groups/1/action")
+check("a room's Off button turns that room off, without a fade", gp[#gp].body.on == false and gp[#gp].body.transitiontime == nil and BRIDGE.lights["1"].state.on == false and not ctl("G01On").Boolean)
+check("On and Off buttons have human pin names", PrettyFor("G03OnB") == "Group 03 On Button" and PrettyFor("G03OffB") == "Group 03 Off Button" and PrettyFor("G03Go7") == "Group 03 Scene Button 7" and PrettyFor("G03Sc7") == "Group 03 Scene Button 7 Scene")
+
+-- v1.4: sensor poll status line
+freshBridge()
+PRINTED = {}
+boot({ ["Bridge IP"] = "192.168.1.50", ["App Key"] = "validkey" })
+advance(2.1)
+local polls = tonumber(ctl("SensorStatus").String:match("(%d+) polls"))
+check("the status line counts sensor polls", polls and polls >= 4 and ctl("SensorStatus").String:find("0 failed") ~= nil, ctl("SensorStatus").String)
+switchEvent("2", 1002); advance(0.6)
+check("and shows when a switch last reported something new", ctl("SensorStatus").String:find("last switch event %d%d:%d%d:%d%d") ~= nil, ctl("SensorStatus").String)
+BRIDGE.online = false; advance(1.6)
+check("failed sensor polls are counted", tonumber(ctl("SensorStatus").String:match("(%d+) failed")) >= 2, ctl("SensorStatus").String)
+local fails = 0
+for _, l in ipairs(PRINTED) do if l:find("^Sensors: poll failed") then fails = fails + 1 end end
+check("a run of failures is printed once, not every poll", fails == 1, fails)
+BRIDGE.online = true; advance(0.6)
+check("recovery is printed", table.concat(PRINTED, "\n"):find("Sensors: polling again") ~= nil)
+freshBridge()
+boot({ ["Bridge IP"] = "192.168.1.50", ["App Key"] = "validkey", ["Switch Count"] = 0, ["Motion Count"] = 0 })
+check("no status line control without switch or motion slots", Controls.SensorStatus == nil)
 
 -- the switch path on the Core: every new event goes to the debug output; Press still pulses if :Trigger() is missing
 freshBridge()

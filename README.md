@@ -5,7 +5,7 @@
 A Q-SYS plugin that controls Philips Hue lights, rooms and zones, and reads Hue switches and motion sensors, through a Hue Bridge on the local network. It pairs with the bridge from the plugin's own panel, polls for feedback, and exposes every control as a pin.
 
 - **Lights:** on/off, brightness, colour temperature, hue, saturation, reachable status, name.
-- **Rooms and zones:** on/off, brightness, scene recall from the bridge's own scenes, and four scene buttons per room or zone, each set to a scene of your choice (ready to drop on a UCI).
+- **Rooms and zones:** on/off, brightness, scene recall from the bridge's own scenes, and per room or zone an On and an Off button plus up to 8 scene buttons, each set to a scene of your choice (ready to drop on a UCI).
 - **Switches:** a Press pin and a Hold pin per button, battery, last event.
 - **Motion sensors:** presence, light level, temperature, battery.
 - **All On / All Off** for every light on the bridge, at the top of every page.
@@ -57,8 +57,9 @@ Pins are named by slot, e.g. *Light 03 Brightness*, *Group 02 Scene Button 1*, *
 | | BRIGHTNESS | both | 0 % turns the room off. |
 | | SCENE | both | The bridge's scenes for that room or zone. Picking one, or writing a scene name to the pin, recalls it. Two scenes with the same name show as *Name* and *Name (2)*. |
 | | NAME | output | |
-| Scene Buttons | SCENE (per button) | both | Picks the scene for that button from the room's scenes. Writing a scene name to the pin sets it too. The setting is kept in the design. |
-| | Scene Button 1–4 | input | Recalls the scene set above it. The button is captioned with the scene's name. |
+| Scene Buttons | On, Off | input | Turn that room or zone on or off (off without a fade). |
+| | SCENE (per button) | both | Picks the scene for that button from the room's scenes. Writing a scene name to the pin sets it too. The setting is kept in the design. |
+| | Scene Button 1–8 | input | Recalls the scene set above it. The button is captioned with the scene's name. |
 | Switches & Sensors | Button 1–4 Press | output | Pulses when that button is pressed and released. |
 | | Button 1–4 Hold | output | On while that button is held; off at release. |
 | | LAST EVENT | output | e.g. *Button 2 short release*. |
@@ -80,6 +81,7 @@ The plugin reads the bridge's sensors twice a second, so it works with any switc
 - **The bridge keeps its own rules.** A switch still does whatever the Hue app set it to do. To have a switch drive only Q-SYS, remove its actions in the Hue app.
 - **Restarts don't replay:** the last event the bridge holds is shown on Last Event at start, but fires nothing.
 - **Hold** needs a real hold: the switch reports it after about a second held down. A quick press is a Press, never a Hold.
+- The top of the Switches & Sensors page says when the sensors were last polled, how many polls succeeded and failed, and when a switch last reported something new. A poll failure and its recovery are written to the Debug Output once each.
 - Every new switch event is written to the plugin's Debug Output (*Switch 01 (Living room switch): Button 2 short release*), so you can see exactly what arrives.
 - A Hue motion sensor appears on the bridge as three sensors (presence, light level, temperature). Its slot takes the presence sensor's ID; the other two are found automatically.
 
@@ -91,7 +93,8 @@ The plugin reads the bridge's sensors twice a second, so it works with any switc
 | App Key | *empty* | Fills the App Key field when it's empty at start. |
 | Use HTTPS | off | Talk to the bridge over `https://`. Needs the Core to accept the bridge's self-signed certificate. |
 | Light Count | 8 | Light slots, 1–32. |
-| Group Count | 4 | Room/zone slots, 0–16. 0 removes the Rooms & Zones page. |
+| Group Count | 4 | Room/zone slots, 0–16. 0 removes the Rooms & Zones and Scene Buttons pages. |
+| Scene Buttons per Room | 4 | Scene buttons per room/zone on the Scene Buttons page, 0–8 (four to a row). The On and Off buttons are always there. |
 | Switch Count | 4 | Switch slots, 0–16. |
 | Motion Count | 2 | Motion sensor slots, 0–8. With Switch Count also 0, the Switches & Sensors page is removed and sensors aren't polled. |
 | Poll Interval (seconds) | 3 | Seconds between light and room polls, 1–60. |

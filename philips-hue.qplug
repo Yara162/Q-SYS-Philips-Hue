@@ -9,7 +9,7 @@
 
 PluginInfo = {
     Name = "Smart Spaces WI~Philips Hue",
-    Version = "1.3.0",
+    Version = "1.4.0",
     -- No version in the Id: Designer matches placed instances to the installed plugin by Id, so a
     -- stable Id lets a new version update a design in place instead of needing a re-drag.
     Id = "smartspaces.philips-hue",
@@ -30,8 +30,10 @@ SWITCH_BUTTONS = 4
 
 -- Per-slot control fields. Shared by the controls, the layout and the runtime.
 LIGHT_FIELDS = { "Id", "Name", "On", "Reach", "Bri", "Ct", "Hue", "Sat", "BriV", "CtV", "HueV", "SatV" }
-GROUP_FIELDS = { "Id", "Name", "NameB", "On", "Bri", "BriV", "Scene", "Sc1", "Sc2", "Sc3", "Sc4", "Go1", "Go2", "Go3", "Go4" }
-SCENE_BUTTONS = 4
+GROUP_FIELDS = { "Id", "Name", "NameB", "On", "Bri", "BriV", "Scene", "OnB", "OffB" }
+-- Scene buttons per room/zone (the "Scene Buttons per Room" property): Sc<n> picks the scene,
+-- Go<n> recalls it.
+MAX_SCENE_BUTTONS = 8
 SWITCH_FIELDS = { "Id", "Name", "Batt", "Reach", "Event", "P1", "P2", "P3", "P4", "H1", "H2", "H3", "H4" }
 MOTION_FIELDS = { "Id", "Name", "Presence", "Lux", "Temp", "Batt", "Reach" }
 
@@ -45,9 +47,7 @@ LIGHT_LABELS = { Id = "ID", Name = "Name", On = "On", Reach = "Reachable", Bri =
     Ct = "Color Temp", Hue = "Hue", Sat = "Saturation", BriV = "Brightness Readout",
     CtV = "Color Temp Readout", HueV = "Hue Readout", SatV = "Saturation Readout" }
 GROUP_LABELS = { Id = "ID", Name = "Name", NameB = "Name (Scene Buttons page)", On = "On", Bri = "Brightness", BriV = "Brightness Readout",
-    Scene = "Scene", Sc1 = "Scene Button 1 Scene", Sc2 = "Scene Button 2 Scene", Sc3 = "Scene Button 3 Scene",
-    Sc4 = "Scene Button 4 Scene", Go1 = "Scene Button 1", Go2 = "Scene Button 2", Go3 = "Scene Button 3",
-    Go4 = "Scene Button 4" }
+    Scene = "Scene", OnB = "On Button", OffB = "Off Button" }
 SWITCH_LABELS = { Id = "ID", Name = "Name", Batt = "Battery", Reach = "Reachable", Event = "Last Event",
     P1 = "Button 1 Press", P2 = "Button 2 Press", P3 = "Button 3 Press", P4 = "Button 4 Press",
     H1 = "Button 1 Hold", H2 = "Button 2 Hold", H3 = "Button 3 Hold", H4 = "Button 4 Hold" }
@@ -58,13 +58,16 @@ GLOBAL_LABELS = { BridgeIP = "Bridge IP", AppKey = "App Key", Pair = "Pair", Ref
     AllOnGroups = "All On (Groups page)", AllOffGroups = "All Off (Groups page)",
     AllOnScenes = "All On (Scene Buttons page)", AllOffScenes = "All Off (Scene Buttons page)",
     AllOnSensors = "All On (Sensors page)", AllOffSensors = "All Off (Sensors page)", Online = "Online", Status = "Status", BridgeLights = "Bridge Lights",
-    BridgeGroups = "Bridge Rooms and Zones", BridgeSensors = "Bridge Switches and Sensors" }
+    BridgeGroups = "Bridge Rooms and Zones", BridgeSensors = "Bridge Switches and Sensors",
+    SensorStatus = "Sensor Poll Status" }
 
 function PrettyFor(name)
     local n, f = name:match("^L(%d%d)(%w+)$")
     if n and LIGHT_LABELS[f] then return "Light " .. n .. " " .. LIGHT_LABELS[f] end
     n, f = name:match("^G(%d%d)(%w+)$")
     if n and GROUP_LABELS[f] then return "Group " .. n .. " " .. GROUP_LABELS[f] end
+    if n and f:match("^Sc%d+$") then return "Group " .. n .. " Scene Button " .. f:match("%d+") .. " Scene" end
+    if n and f:match("^Go%d+$") then return "Group " .. n .. " Scene Button " .. f:match("%d+") end
     n, f = name:match("^S(%d%d)(%w+)$")
     if n and SWITCH_LABELS[f] then return "Switch " .. n .. " " .. SWITCH_LABELS[f] end
     n, f = name:match("^M(%d%d)(%w+)$")
@@ -104,17 +107,19 @@ function PageNames(props)
 end
 
 function GetProperties()
-    return {
+    local props = {
         { Name = "Bridge IP",       Type = "string",  Value = "" },
         { Name = "App Key",         Type = "string",  Value = "" },
         { Name = "Use HTTPS",       Type = "boolean", Value = false },
         { Name = "Light Count",     Type = "integer", Min = 1, Max = MAX_LIGHTS, Value = 8 },
         { Name = "Group Count",     Type = "integer", Min = 0, Max = MAX_GROUPS, Value = 4 },
+        { Name = "Scene Buttons per Room", Type = "integer", Min = 0, Max = MAX_SCENE_BUTTONS, Value = 4 },
         { Name = "Switch Count",    Type = "integer", Min = 0, Max = MAX_SWITCHES, Value = 4 },
         { Name = "Motion Count",    Type = "integer", Min = 0, Max = MAX_MOTION, Value = 2 },
         { Name = "Poll Interval (seconds)",   Type = "integer", Min = 1, Max = 60, Value = 3 },
         { Name = "Transition Time (x100 ms)", Type = "integer", Min = 0, Max = 50, Value = 4 },
     }
+    return props
 end
 
 function RectifyProperties(props)
@@ -148,7 +153,9 @@ function GetControls(props)
         table.insert(ctls, { Name = GKey(i, "BriV"),  ControlType = "Text" })
         table.insert(ctls, { Name = GKey(i, "NameB"), ControlType = "Text" })
         table.insert(ctls, { Name = GKey(i, "Scene"), ControlType = "Text", PinStyle = "Both", UserPin = true })
-        for b = 1, SCENE_BUTTONS do
+        table.insert(ctls, { Name = GKey(i, "OnB"),   ControlType = "Button", ButtonType = "Trigger", PinStyle = "Input", UserPin = true })
+        table.insert(ctls, { Name = GKey(i, "OffB"),  ControlType = "Button", ButtonType = "Trigger", PinStyle = "Input", UserPin = true })
+        for b = 1, PropValue(props, "Scene Buttons per Room", 4) do
             table.insert(ctls, { Name = GKey(i, "Sc" .. b), ControlType = "Text", PinStyle = "Both", UserPin = true })
             table.insert(ctls, { Name = GKey(i, "Go" .. b), ControlType = "Button", ButtonType = "Trigger", PinStyle = "Input", UserPin = true })
         end
@@ -194,6 +201,9 @@ function GetControls(props)
     table.insert(ctls, { Name = "BridgeLights", ControlType = "Text" })
     table.insert(ctls, { Name = "BridgeGroups", ControlType = "Text" })
     table.insert(ctls, { Name = "BridgeSensors", ControlType = "Text" })
+    if PropValue(props, "Switch Count", 4) + PropValue(props, "Motion Count", 2) > 0 then
+        table.insert(ctls, { Name = "SensorStatus", ControlType = "Text", PinStyle = "Output", UserPin = true })
+    end
 
     return ctls
 end
@@ -384,28 +394,34 @@ local function groupsLayout(props)
     return layout, graphics
 end
 
--- Per room/zone: its name, then four scene buttons, each a scene picker above the button that
--- recalls it. The buttons are the controls to put on a UCI.
+-- Per room/zone: its name with On and Off buttons under it, then its scene buttons, each a scene
+-- picker above the button that recalls it, four to a row. The buttons are the controls to put on
+-- a UCI.
 local function sceneButtonsLayout(props)
     local layout, graphics = {}, {}
     local n = PropValue(props, "Group Count", 4)
-    local pad, name_w, col_w, gap = 8, 150, 150, 8
-    local panel_w = pad + name_w + gap + SCENE_BUTTONS * (col_w + gap) - gap + pad
+    local nb = PropValue(props, "Scene Buttons per Room", 4)
+    local pad, name_w, col_w, gap, per_row, cell_h = 8, 150, 150, 8, 4, 52
+    local cols = math.min(math.max(nb, 1), per_row)
+    local rows = math.max(1, math.ceil(nb / per_row))
+    local x0 = pad + name_w + gap
+    local panel_w = math.max(x0 + cols * (col_w + gap) - gap + pad, 420)
     background(graphics, panel_w)
     title(graphics, "PHILIPS HUE - SCENE BUTTONS", pad, panel_w)
     local head_y = 34
     header(graphics, "ROOM / ZONE", pad, head_y, name_w)
-    for b = 1, SCENE_BUTTONS do
-        header(graphics, "BUTTON " .. b .. ": SCENE", pad + name_w + gap + (b - 1) * (col_w + gap), head_y, col_w)
-    end
-    local top, block = head_y + 20, 56
+    if nb > 0 then header(graphics, "SCENE BUTTONS: PICK A SCENE ABOVE EACH BUTTON", x0, head_y, panel_w - x0 - pad) end
+    local top, block = head_y + 20, math.max(rows * cell_h, 56) + 8
     for i = 1, n do
         local y = top + (i - 1) * block
-        readout(layout, GKey(i, "NameB"), pad, y + 12, name_w, 20)
-        for b = 1, SCENE_BUTTONS do
-            local x = pad + name_w + gap + (b - 1) * (col_w + gap)
-            layout[GKey(i, "Sc" .. b)] = { Style = "ComboBox", Position = { x, y }, Size = { col_w, 20 }, FontSize = 10 }
-            trigger(layout, GKey(i, "Go" .. b), "Scene " .. b, x, y + 24, col_w, 24)
+        readout(layout, GKey(i, "NameB"), pad, y, name_w, 20)
+        trigger(layout, GKey(i, "OnB"), "On", pad, y + 24, 71, 24)
+        trigger(layout, GKey(i, "OffB"), "Off", pad + 79, y + 24, 71, 24)
+        for b = 1, nb do
+            local x = x0 + ((b - 1) % per_row) * (col_w + gap)
+            local cy = y + math.floor((b - 1) / per_row) * cell_h
+            layout[GKey(i, "Sc" .. b)] = { Style = "ComboBox", Position = { x, cy }, Size = { col_w, 20 }, FontSize = 10 }
+            trigger(layout, GKey(i, "Go" .. b), "Scene " .. b, x, cy + 24, col_w, 24)
         end
     end
     graphics[1].Size = { panel_w, top + n * block + pad }
@@ -467,7 +483,8 @@ local function sensorsLayout(props)
 
     background(graphics, panel_w)
     title(graphics, "PHILIPS HUE - SWITCHES & SENSORS", pad, panel_w)
-    local y = 34
+    readout(layout, "SensorStatus", pad, 32, panel_w - 2 * pad, 18)
+    local y = 56
 
     if ns > 0 then
         header(graphics, "SWITCHES", pad, y, 200)
@@ -591,6 +608,7 @@ if Controls then
 
     NL = Properties["Light Count"].Value
     NG = Properties["Group Count"].Value
+    NSB = Properties["Scene Buttons per Room"].Value
     NS = Properties["Switch Count"].Value
     NM = Properties["Motion Count"].Value
     POLL_S = Properties["Poll Interval (seconds)"].Value
@@ -620,6 +638,7 @@ if Controls then
     pairing, pairDeadline = false, 0
     bridgeSensors = {}
     sensorBusy, sensorStarted = false, 0
+    sensorPolls, sensorFails, sensorFailing, lastSwitchChange = 0, 0, false, nil
     switchSeen = {}      -- slot -> { id, key } of the last event seen; nil until the first sighting
     holdSeen = {}        -- slot -> { [button] = time of its last hold event }
     for i = 1, NS do holdSeen[i] = {} end
@@ -777,7 +796,7 @@ if Controls then
         local sc = scenes[idOf(G(i, "Id"))]
         local names = sc and sc.names or {}
         G(i, "Scene").Choices = names
-        for b = 1, SCENE_BUTTONS do G(i, "Sc" .. b).Choices = names end
+        for b = 1, NSB do G(i, "Sc" .. b).Choices = names end
     end
 
     local function applyGroup(i)
@@ -1086,6 +1105,7 @@ if Controls then
             return
         end
         if seen.key == key then return end
+        lastSwitchChange = os.date("%H:%M:%S")
         S(i, "Event").String = label
         print(string.format("Switch %02d (%s): %s [buttonevent %s at %s]", i, d.name or id, label ~= "" and label or "unknown event",
             tostring(st.buttonevent), tostring(st.lastupdated)))
@@ -1166,6 +1186,14 @@ if Controls then
         Controls.BridgeSensors.Choices = lines
     end
 
+    -- One line that says whether sensor polling is alive: when it last succeeded, how often, and
+    -- when a switch last reported something new.
+    function showSensorStatus()
+        local line = string.format("Sensors polled %s  |  %d polls, %d failed", os.date("%H:%M:%S"), sensorPolls, sensorFails)
+        if lastSwitchChange then line = line .. "  |  last switch event " .. lastSwitchChange end
+        Controls.SensorStatus.String = line
+    end
+
     function pollSensors()
         if NS + NM == 0 or bridgeIP() == "" or appKey() == "" then return end
         if sensorBusy and now() - sensorStarted < POLL_GATE_S then return end
@@ -1175,14 +1203,34 @@ if Controls then
             if gen ~= pollGen then return end
             sensorBusy = false
             local t = code == 200 and decode(data) or nil
-            if not t or hueError(t) then return end   -- the light poll reports the bridge's state
+            local e = hueError(t)
+            if not t or e then
+                sensorFails = sensorFails + 1
+                if not sensorFailing then
+                    print("Sensors: poll failed (" .. (e and tostring(e.description) or ("HTTP " .. tostring(code))) .. ")")
+                end
+                sensorFailing = true
+                showSensorStatus()
+                return
+            end
+            if sensorFailing then print("Sensors: polling again") end
+            sensorFailing = false
+            sensorPolls = sensorPolls + 1
             bridgeSensors = t
             fillSlots(NS, function(i) return S(i, "Id") end, sensorIds(isSwitch))
             fillSlots(NM, function(i) return M(i, "Id") end, sensorIds(isMotion))
-            for i = 1, NS do applySwitch(i) end
-            for i = 1, NM do applyMotion(i) end
+            -- An error in one slot is printed with its slot and doesn't stop the others.
+            for i = 1, NS do
+                local ok, err = pcall(applySwitch, i)
+                if not ok then print(string.format("Switch %02d: error: %s", i, tostring(err))) end
+            end
+            for i = 1, NM do
+                local ok, err = pcall(applyMotion, i)
+                if not ok then print(string.format("Motion %02d: error: %s", i, tostring(err))) end
+            end
             expireHolds()
             updateSensorList()
+            showSensorStatus()
         end)
     end
 
@@ -1271,7 +1319,9 @@ if Controls then
             queueGroup(i, body)
         end
         G(i, "Scene").EventHandler = function(c) recallScene(i, c.String) end
-        for b = 1, SCENE_BUTTONS do
+        G(i, "OnB").EventHandler = function() showOn(G(i, "On"), true); queueGroup(i, { on = true }) end
+        G(i, "OffB").EventHandler = function() showOn(G(i, "On"), false); queueGroup(i, { on = false }) end
+        for b = 1, NSB do
             G(i, "Sc" .. b).EventHandler = function() showSceneButton(i, b) end
             G(i, "Go" .. b).EventHandler = function()
                 local name = trim(G(i, "Sc" .. b).String)
@@ -1322,7 +1372,7 @@ if Controls then
     end
     for i = 1, NG do
         showLevel(G(i, "Bri"), G(i, "BriV"), "Bri")
-        for b = 1, SCENE_BUTTONS do showSceneButton(i, b) end
+        for b = 1, NSB do showSceneButton(i, b) end
     end
 
     pollTimer = Timer.New()
