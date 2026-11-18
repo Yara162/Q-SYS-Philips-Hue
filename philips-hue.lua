@@ -9,7 +9,7 @@
 
 PluginInfo = {
     Name = "Smart Spaces WI~Philips Hue",
-    Version = "1.4.0",
+    Version = "1.4.1",
     -- No version in the Id: Designer matches placed instances to the installed plugin by Id, so a
     -- stable Id lets a new version update a design in place instead of needing a re-drag.
     Id = "smartspaces.philips-hue",
@@ -118,6 +118,7 @@ function GetProperties()
         { Name = "Motion Count",    Type = "integer", Min = 0, Max = MAX_MOTION, Value = 2 },
         { Name = "Poll Interval (seconds)",   Type = "integer", Min = 1, Max = 60, Value = 3 },
         { Name = "Transition Time (x100 ms)", Type = "integer", Min = 0, Max = 50, Value = 4 },
+        { Name = "Log Sensor Data",           Type = "boolean", Value = false },
     }
     return props
 end
@@ -609,6 +610,9 @@ if Controls then
     NL = Properties["Light Count"].Value
     NG = Properties["Group Count"].Value
     NSB = Properties["Scene Buttons per Room"].Value
+    LOG_SENSORS = Properties["Log Sensor Data"].Value
+    LOG_EVERY = 20       -- with Log Sensor Data on: a summary line every 20 sensor polls (10 s)
+    loggedRaw = {}       -- switch slot -> the raw values last printed for it
     NS = Properties["Switch Count"].Value
     NM = Properties["Motion Count"].Value
     POLL_S = Properties["Poll Interval (seconds)"].Value
@@ -1194,6 +1198,26 @@ if Controls then
         Controls.SensorStatus.String = line
     end
 
+    -- Log Sensor Data: what the Core actually received for each switch, printed when it changes,
+    -- and a summary every LOG_EVERY polls. For checking switch events against the bridge.
+    function logSensorData(data)
+        local parts = {}
+        for i = 1, NS do
+            local id = idOf(S(i, "Id"))
+            local d = bridgeSensors[id]
+            local st = type(d) == "table" and type(d.state) == "table" and d.state or {}
+            local raw = string.format("lastupdated=%s buttonevent=%s (%s)", tostring(st.lastupdated), tostring(st.buttonevent), math.type(st.buttonevent) or type(st.buttonevent))
+            if loggedRaw[i] ~= raw then
+                print(string.format("Sensor data: poll %d, switch %02d (ID %s): %s", sensorPolls, i, id, raw))
+                loggedRaw[i] = raw
+            end
+            table.insert(parts, string.format("%02d:%s|%s", i, tostring(st.lastupdated), tostring(st.buttonevent)))
+        end
+        if sensorPolls % LOG_EVERY == 0 then
+            print(string.format("Sensor data: poll %d, reply %d bytes, %s", sensorPolls, #(data or ""), table.concat(parts, "  ")))
+        end
+    end
+
     function pollSensors()
         if NS + NM == 0 or bridgeIP() == "" or appKey() == "" then return end
         if sensorBusy and now() - sensorStarted < POLL_GATE_S then return end
@@ -1231,6 +1255,7 @@ if Controls then
             expireHolds()
             updateSensorList()
             showSensorStatus()
+            if LOG_SENSORS then logSensorData(data) end
         end)
     end
 

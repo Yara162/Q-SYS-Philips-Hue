@@ -99,6 +99,7 @@ The plugin reads the bridge's sensors twice a second, so it works with any switc
 | Motion Count | 2 | Motion sensor slots, 0–8. With Switch Count also 0, the Switches & Sensors page is removed and sensors aren't polled. |
 | Poll Interval (seconds) | 3 | Seconds between light and room polls, 1–60. |
 | Transition Time (x100 ms) | 4 | Fade time for commands, in 100 ms steps (4 = 400 ms, Hue's default). Turning off never fades: see below. |
+| Log Sensor Data | off | Writes what the plugin receives for each switch (raw `lastupdated` and `buttonevent`) to the Debug Output when it changes, plus a summary every 10 s. For troubleshooting switches; leave off otherwise. |
 
 ## How it talks to the bridge
 

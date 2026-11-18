@@ -368,7 +368,7 @@ local function props(t)
 end
 
 local DEFAULT_PROPS = { ["Bridge IP"] = "", ["App Key"] = "", ["Use HTTPS"] = false, ["Light Count"] = 8,
-    ["Group Count"] = 4, ["Scene Buttons per Room"] = 4, ["Switch Count"] = 4, ["Motion Count"] = 2, ["Poll Interval (seconds)"] = 3, ["Transition Time (x100 ms)"] = 4 }
+    ["Group Count"] = 4, ["Scene Buttons per Room"] = 4, ["Switch Count"] = 4, ["Motion Count"] = 2, ["Poll Interval (seconds)"] = 3, ["Transition Time (x100 ms)"] = 4, ["Log Sensor Data"] = false }
 
 local function withProps(over)
     local t = {}
@@ -918,6 +918,22 @@ check("recovery is printed", table.concat(PRINTED, "\n"):find("Sensors: polling 
 freshBridge()
 boot({ ["Bridge IP"] = "192.168.1.50", ["App Key"] = "validkey", ["Switch Count"] = 0, ["Motion Count"] = 0 })
 check("no status line control without switch or motion slots", Controls.SensorStatus == nil)
+
+-- v1.4.1: Log Sensor Data prints what the Core received for each switch
+freshBridge()
+PRINTED = {}
+boot({ ["Bridge IP"] = "192.168.1.50", ["App Key"] = "validkey", ["Log Sensor Data"] = true })
+advance(1)
+local function linesMatching(pat) local n = 0 for _, l in ipairs(PRINTED) do if l:find(pat) then n = n + 1 end end return n end
+check("with Log Sensor Data on, each switch's raw values are printed once at start", linesMatching("^Sensor data: poll %d+, switch 01 %(ID 2%): lastupdated=2026%-11%-18T01:00:00 buttonevent=1002 %(integer%)") == 1, table.concat(PRINTED, " / "))
+switchEvent("2", 4002); advance(0.6)
+check("and again when they change", linesMatching("switch 01 %(ID 2%): lastupdated=.- buttonevent=4002") == 1)
+advance(10)
+check("with a summary every 20 polls naming the reply size", linesMatching("^Sensor data: poll %d+, reply %d+ bytes, 01:") >= 1)
+PRINTED = {}
+boot({ ["Bridge IP"] = "192.168.1.50", ["App Key"] = "validkey" })
+advance(11)
+check("with it off, nothing is printed", linesMatching("^Sensor data") == 0)
 
 -- the switch path on the Core: every new event goes to the debug output; Press still pulses if :Trigger() is missing
 freshBridge()
